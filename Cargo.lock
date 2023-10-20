@@ -1332,6 +1332,7 @@ dependencies = [
  "futures-util",
  "hound",
  "poem",
+ "serde",
  "symphonia",
  "tokio",
  "tokio-stream",

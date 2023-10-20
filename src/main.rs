@@ -5,7 +5,6 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::collections::BTreeMap;
 use std::default::Default;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
@@ -14,21 +13,25 @@ use tokio::sync::mpsc::channel;
 use async_stream::stream;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_transcribestreaming::primitives::Blob;
-use aws_sdk_transcribestreaming::types::{AudioStream, AudioEvent, LanguageCode, MediaEncoding, TranscriptResultStream};
+use aws_sdk_transcribestreaming::types::{AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream};
 use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
 use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use clap::Parser;
 
-use poem::{handler, listener::TcpListener, Server, get, Route, IntoResponse, Endpoint, EndpointExt};
+use poem::{Endpoint, EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
 use futures_util::{Sink, SinkExt, TryFutureExt, TryStreamExt};
 use poem::endpoint::StaticFilesEndpoint;
 use poem::web::websocket::{Message, WebSocket};
 use futures_util::stream::StreamExt;
-use poem::web::Data;
+use poem::web::{Data, Query};
 
-use tokio::{select};
+use tokio::select;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::Stream;
+use serde::Deserialize;
+use lesson::{LessonsManager};
+
+mod lesson;
 
 
 #[derive(Debug, Parser)]
@@ -46,6 +49,7 @@ struct Opt {
     verbose: bool,
 }
 
+#[derive(Clone)]
 enum ReplyEvent {
     Transcribed(String),
     Translated(String),
@@ -121,14 +125,7 @@ struct Context {
     translate_client: aws_sdk_translate::Client,
     polly_client: aws_sdk_polly::Client,
     transcript_client: aws_sdk_transcribestreaming::Client,
-}
-
-struct Lessons {
-    lessons: BTreeMap<u32, Lesson>
-}
-
-struct Lesson {
-
+    lessons_manager: LessonsManager,
 }
 
 #[tokio::main]
@@ -152,7 +149,6 @@ async fn main() -> Result<(), std::io::Error> {
             "Region:                    {}",
             region_provider.region().await.unwrap().as_ref()
         );
-        // println!("Audio filename:            {}", &audio_file);
         println!();
     }
 
@@ -164,14 +160,19 @@ async fn main() -> Result<(), std::io::Error> {
         translate_client,
         polly_client,
         transcript_client,
+        lessons_manager: LessonsManager::new(&shared_config),
     };
 
-    let app = Route::new().nest(
+    let app = Route::new()
+        .nest(
         "/",
         StaticFilesEndpoint::new("./static")
             .show_files_listing()
             .index_file("index.html"),
-    ).at("/translate", get(stream_translate))
+        )
+        .at("/translate", get(stream_translate))
+        .at("/lesson-speaker", get(stream_speaker))
+        .at("/lesson-listener", get(stream_listener))
         .data(ctx);
     let listener = TcpListener::bind("[::]:8080");
     let server = Server::new(listener);
@@ -179,6 +180,34 @@ async fn main() -> Result<(), std::io::Error> {
     server.run(app).await
 }
 
+
+#[derive(Deserialize, Debug)]
+pub struct LessonSpeakerQuery {
+    id: u32,
+    lang: String,
+}
+
+#[handler]
+async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, ws: WebSocket) -> impl IntoResponse {
+    let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone()).await;
+    println!("{:?}", lesson);
+    println!("{:?}", query);
+}
+
+
+#[derive(Deserialize, Debug)]
+pub struct LessonListenerQuery {
+    id: u32,
+    lang: String,
+    voice: String,
+}
+
+#[handler]
+async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>, ws: WebSocket) -> impl IntoResponse {
+    let lesson = ctx.lessons_manager.get_lesson(query.id).await;
+    println!("{:?}", lesson);
+    println!("{:?}", query);
+}
 
 #[handler]
 async fn stream_translate(ctx: Data<&Context>, ws: WebSocket) -> impl IntoResponse {
