@@ -194,18 +194,11 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
             let _ = socket.send(Message::Text("lesson not found".to_string())).await;
             return
         };
-
-        println!("lesson found");
         let mut transcript_rx = lesson.transcript_channel();
-        println!("transcribe start");
-
         let mut lang_lesson = lesson.get_or_init(query.lang.clone()).await;
         let mut translate_rx = lang_lesson.translated_channel();
-        println!("translate start");
-
         let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
         let mut voice_rx = voice_lesson.voice_channel();
-        println!("synthesize start");
 
         loop {
             select! {
