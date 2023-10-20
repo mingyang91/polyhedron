@@ -57,48 +57,6 @@ enum ReplyEvent {
 }
 
 
-/// Transcribes an audio file to text.
-/// # Arguments
-///
-/// * `-a AUDIO_FILE` - The name of the audio file.
-///   It must be a WAV file, which is converted to __pcm__ format for Amazon Transcribe.
-///   Amazon transcribe also supports __ogg-opus__ and __flac__ formats.
-/// * `[-r REGION]` - The Region in which the client is created.
-///   If not supplied, uses the value of the **AWS_REGION** environment variable.
-///   If the environment variable is not set, defaults to **us-west-2**.
-/// * `[-v]` - Whether to display additional information.
-async fn stream_process(translate_client: aws_sdk_translate::Client,
-                        polly_client: aws_sdk_polly::Client,
-                        transcript_client: aws_sdk_transcribestreaming::Client,
-                        mut rx: Receiver<Vec<u8>>,
-                        tx: Sender<ReplyEvent>) -> Result<(), StreamTranscriptionError> {
-
-    let input_stream = stream! {
-        while let Some(raw) = rx.recv().await {
-            yield Ok(AudioStream::AudioEvent(AudioEvent::builder().audio_chunk(Blob::new(raw)).build()));
-        }
-    };
-
-    let output = transcript_client
-        .start_stream_transcription()
-        .language_code(LanguageCode::ZhCn)//LanguageCode::EnGb
-        .media_sample_rate_hertz(16000)
-        .media_encoding(MediaEncoding::Pcm)
-        .audio_stream(input_stream.into())
-        .send()
-        .await
-        .map_err(|e| StreamTranscriptionError::EstablishStreamError(Box::new(e)))?;
-
-    let output_stream = to_stream(output);
-
-    output_stream
-        .flat_map(|res| {
-            process(translate_client.clone(), polly_client.clone(), res)
-        })
-        .try_for_each(|reply| tx.send(reply).map_err(|e| StreamTranscriptionError::Shutdown))
-        .await
-}
-
 async fn translate(client: &aws_sdk_translate::Client, transcript: Option<String>, source_lang_code: Option<String>) -> Option<String> {
     let res = client.translate_text()
         .set_text(transcript)
@@ -122,9 +80,6 @@ async fn synthesize(client: &aws_sdk_polly::Client, transcript: String) -> Optio
 
 #[derive(Clone)]
 struct Context {
-    translate_client: aws_sdk_translate::Client,
-    polly_client: aws_sdk_polly::Client,
-    transcript_client: aws_sdk_transcribestreaming::Client,
     lessons_manager: LessonsManager,
 }
 
@@ -153,13 +108,7 @@ async fn main() -> Result<(), std::io::Error> {
     }
 
     let shared_config = aws_config::from_env().region(region_provider).load().await;
-    let transcript_client = aws_sdk_transcribestreaming::Client::new(&shared_config);
-    let translate_client = aws_sdk_translate::Client::new(&shared_config);
-    let polly_client = aws_sdk_polly::Client::new(&shared_config);
     let ctx = Context {
-        translate_client,
-        polly_client,
-        transcript_client,
         lessons_manager: LessonsManager::new(&shared_config),
     };
 
@@ -170,7 +119,6 @@ async fn main() -> Result<(), std::io::Error> {
             .show_files_listing()
             .index_file("index.html"),
         )
-        .at("/translate", get(stream_translate))
         .at("/ws/lesson-speaker", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
         .at("lesson-speaker", StaticFileEndpoint::new("./static/index.html"))
@@ -284,70 +232,6 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
     })
 }
 
-#[handler]
-async fn stream_translate(ctx: Data<&Context>, ws: WebSocket) -> impl IntoResponse {
-    let translate_client = ctx.translate_client.clone();
-    let polly_client = ctx.polly_client.clone();
-    let transcript_client = ctx.transcript_client.clone();
-    ws.on_upgrade(|mut socket| async move {
-        let (origin_tx, origin_rx) = channel::<Vec<u8>>(128);
-        let (translate_tx, mut translate_rx) = channel::<ReplyEvent>(128);
-        let stream_fut = stream_process(
-            translate_client,
-            polly_client,
-            transcript_client,
-            origin_rx,
-            translate_tx);
-
-        let ws_fut = async {
-            loop {
-                select! {
-                msg = socket.next() => {
-                    match msg.as_ref() {
-                        Some(Ok(Message::Binary(bin))) => {
-                            origin_tx.send(bin.to_vec()).await.expect("failed to send");
-                        },
-                        Some(Ok(_)) => {
-                            println!("Other: {:?}", msg);
-                        },
-                        Some(Err(e)) => {
-                            println!("Error: {:?}", e);
-                        },
-                        None => {
-                            socket.close().await.expect("failed to close");
-                            println!("Other: {:?}", msg);
-                            break;
-                        }
-                    }
-                },
-                output = translate_rx.recv() => {
-                    if let Some(reply) = output {
-                        match reply {
-                            ReplyEvent::Transcribed(transcript) => {
-                                println!("Transcribed: {}", transcript);
-                                socket.send(Message::Text(transcript)).await.expect("failed to send");
-                            },
-                            ReplyEvent::Translated(translated) => {
-                                println!("Translated: {}", translated);
-                                socket.send(Message::Text(translated)).await.expect("failed to send");
-                            },
-                            ReplyEvent::Synthesized(raw) => {
-                                println!("Synthesized: {:?}", raw.len());
-                                socket.send(Message::Binary(raw)).await.expect("failed to send");
-                            },
-                        }
-                    }
-                },
-            }
-            }
-        };
-        select! {
-            _ = stream_fut => {},
-            _ = ws_fut => {},
-        }
-    })
-}
-
 #[derive(Debug)]
 enum StreamTranscriptionError {
     EstablishStreamError(Box<dyn Error + Send + Sync>),
@@ -375,30 +259,6 @@ impl Error for StreamTranscriptionError {
             StreamTranscriptionError::TranscriptResultStreamError(e) => Some(e.as_ref()),
             StreamTranscriptionError::Shutdown => None,
             StreamTranscriptionError::Unknown => None,
-        }
-    }
-}
-
-fn to_stream(mut output: StartStreamTranscriptionOutput) -> impl Stream<Item=Result<String, StreamTranscriptionError>> {
-    stream! {
-        while let Some(event) = output
-            .transcript_result_stream
-            .recv()
-            .await
-            .map_err(|e| StreamTranscriptionError::TranscriptResultStreamError(Box::new(e)))? {
-            match event {
-                TranscriptResultStream::TranscriptEvent(transcript_event) => {
-                    let transcript = transcript_event.transcript.expect("transcript");
-                    for result in transcript.results.unwrap_or_default() {
-                        if !result.is_partial {
-                            let first_alternative = &result.alternatives.as_ref().expect("should have")[0];
-                            let slice = first_alternative.transcript.as_ref().expect("should have");
-                            yield Ok(slice.clone());
-                        }
-                    }
-                }
-                otherwise => yield Err(StreamTranscriptionError::Unknown),
-            }
         }
     }
 }

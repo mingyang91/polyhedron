@@ -4,12 +4,13 @@ use std::collections::BTreeMap;
 use async_stream::stream;
 use aws_config::SdkConfig;
 use aws_sdk_polly::types::VoiceId;
+use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use aws_sdk_transcribestreaming::primitives::Blob;
 use aws_sdk_transcribestreaming::types::{AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::{Stream, StreamExt, TryStreamExt};
 
 use tokio::select;
-use crate::to_stream;
+use crate::StreamTranscriptionError;
 
 #[derive(Clone, Debug)]
 pub struct LessonsManager {
@@ -381,6 +382,31 @@ impl Drop for InnerVoiceLesson {
     fn drop(&mut self) {
         if let Some(tx) = self.drop_handler.take() {
             let _ = tx.send(Signal::Stop);
+        }
+    }
+}
+
+
+fn to_stream(mut output: StartStreamTranscriptionOutput) -> impl Stream<Item=Result<String, StreamTranscriptionError>> {
+    stream! {
+        while let Some(event) = output
+            .transcript_result_stream
+            .recv()
+            .await
+            .map_err(|e| StreamTranscriptionError::TranscriptResultStreamError(Box::new(e)))? {
+            match event {
+                TranscriptResultStream::TranscriptEvent(transcript_event) => {
+                    let transcript = transcript_event.transcript.expect("transcript");
+                    for result in transcript.results.unwrap_or_default() {
+                        if !result.is_partial {
+                            let first_alternative = &result.alternatives.as_ref().expect("should have")[0];
+                            let slice = first_alternative.transcript.as_ref().expect("should have");
+                            yield Ok(slice.clone());
+                        }
+                    }
+                }
+                otherwise => yield Err(StreamTranscriptionError::Unknown),
+            }
         }
     }
 }
