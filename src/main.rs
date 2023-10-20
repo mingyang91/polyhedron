@@ -20,7 +20,7 @@ use clap::Parser;
 
 use poem::{Endpoint, EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
 use futures_util::{Sink, SinkExt, TryFutureExt, TryStreamExt};
-use poem::endpoint::StaticFilesEndpoint;
+use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
 use poem::web::websocket::{Message, WebSocket};
 use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
@@ -171,8 +171,10 @@ async fn main() -> Result<(), std::io::Error> {
             .index_file("index.html"),
         )
         .at("/translate", get(stream_translate))
-        .at("/lesson-speaker", get(stream_speaker))
-        .at("/lesson-listener", get(stream_listener))
+        .at("/ws/lesson-speaker", get(stream_speaker))
+        .at("/ws/lesson-listener", get(stream_listener))
+        .at("lesson-speaker", StaticFileEndpoint::new("./static/index.html"))
+        .at("lesson-listener", StaticFileEndpoint::new("./static/index.html"))
         .data(ctx);
     let listener = TcpListener::bind("[::]:8080");
     let server = Server::new(listener);
@@ -189,9 +191,40 @@ pub struct LessonSpeakerQuery {
 
 #[handler]
 async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, ws: WebSocket) -> impl IntoResponse {
-    let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone()).await;
-    println!("{:?}", lesson);
-    println!("{:?}", query);
+    let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone().parse().expect("Not supported lang")).await;
+
+    ws.on_upgrade(|mut socket| async move {
+        let origin_tx = lesson.voice_channel();
+        let mut transcribe_rx = lesson.transcript_channel();
+        loop {
+            select! {
+                msg = socket.next() => {
+                    match msg.as_ref() {
+                        Some(Ok(Message::Binary(bin))) => {
+                            origin_tx.send(bin.to_vec()).await.expect("failed to send");
+                        },
+                        Some(Ok(_)) => {
+                            println!("Other: {:?}", msg);
+                        },
+                        Some(Err(e)) => {
+                            println!("Error: {:?}", e);
+                        },
+                        None => {
+                            socket.close().await.expect("failed to close");
+                            println!("Other: {:?}", msg);
+                            break;
+                        }
+                    }
+                },
+                output = transcribe_rx.recv() => {
+                    if let Ok(transcript) = output {
+                        println!("Transcribed: {}", transcript);
+                        socket.send(Message::Text(transcript)).await.expect("failed to send");
+                    }
+                },
+            }
+        }
+    })
 }
 
 
@@ -204,9 +237,51 @@ pub struct LessonListenerQuery {
 
 #[handler]
 async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>, ws: WebSocket) -> impl IntoResponse {
-    let lesson = ctx.lessons_manager.get_lesson(query.id).await;
-    println!("{:?}", lesson);
+    let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
     println!("{:?}", query);
+    let voice_id = query.voice.parse().expect("Not supported voice");
+
+    ws.on_upgrade(|mut socket| async move {
+        let Some(lesson) = lesson_opt else {
+            let _ = socket.send(Message::Text("lesson not found".to_string())).await;
+            return
+        };
+
+        println!("lesson found");
+        let mut transcript_rx = lesson.transcript_channel();
+        println!("transcribe start");
+
+        let mut lang_lesson = lesson.get_or_init(query.lang.clone()).await;
+        let mut translate_rx = lang_lesson.translated_channel();
+        println!("translate start");
+
+        let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
+        let mut voice_rx = voice_lesson.voice_channel();
+        println!("synthesize start");
+
+        loop {
+            select! {
+                transcript = transcript_rx.recv() => {
+                    if let Ok(transcript) = transcript {
+                        println!("Transcribed: {}", transcript);
+                        let _ = socket.send(Message::Text(transcript)).await;
+                    }
+                },
+                translated = translate_rx.recv() => {
+                    if let Ok(translated) = translated {
+                        println!("Translated: {}", translated);
+                        let _ = socket.send(Message::Text(translated)).await;
+                    }
+                },
+                voice = voice_rx.recv() => {
+                    if let Ok(voice) = voice {
+                        println!("Synthesized: {:?}", voice.len());
+                        let _ = socket.send(Message::Binary(voice)).await;
+                    }
+                },
+            }
+        }
+    })
 }
 
 #[handler]

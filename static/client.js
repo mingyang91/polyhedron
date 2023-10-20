@@ -13,7 +13,8 @@ if (location.protocol === "https:") {
     websocket_uri = "ws:"
 }
 websocket_uri += "//" + location.host
-websocket_uri += location.pathname + "translate"
+websocket_uri += "/ws" + location.pathname
+websocket_uri += location.search
 const socket = new WebSocket(websocket_uri);
 
 //================= CONFIG =================
@@ -122,10 +123,15 @@ function stopRecording() {
     // videoElement.srcObject = null;
 }
 
+
+const audioQueue = new rxjs.Subject();
+audioQueue
+    .pipe(rxjs.concatMap(playAudio))
+    .subscribe(_ => console.log('played audio'));
 //================= SOCKET IO =================
 socket.onmessage = function (msg) {
     if (msg.data instanceof Blob) {
-        playAudio(msg.data)
+        audioQueue.next(msg.data)
     } else {
         // text
         onSpeechData(msg.data)
@@ -258,8 +264,11 @@ function capitalize(s) {
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+let nextStartTime = audioContext.currentTime;
+
 async function playAudio(chunk) {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const totalLength = chunk.size;
 
     // Create an AudioBuffer of enough size
@@ -267,14 +276,20 @@ async function playAudio(chunk) {
     const output = audioBuffer.getChannelData(0);
 
     // Copy the PCM samples into the AudioBuffer
-    const int16Array = new Int16Array(await chunk.arrayBuffer())
+    const arrayBuf = await chunk.arrayBuffer();
+    const int16Array = new Int16Array(arrayBuf, 0, Math.floor(arrayBuf.byteLength / 2))
     for(let i = 0; i < int16Array.length; i++) {
         output[i] = int16Array[i] / 32768.0;  // Convert to [-1, 1] float32 range
     }
 
     // 3. Play the audio using Web Audio API
+
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
-    source.start();
+    source.start(nextStartTime);
+    nextStartTime = Math.max(nextStartTime, audioContext.currentTime) + audioBuffer.duration;
+    source.onended = () => {
+        console.log('audio slice ended');
+    }
 }
