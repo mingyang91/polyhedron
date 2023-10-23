@@ -9,13 +9,9 @@ use std::default::Default;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::future::Future;
-use tokio::sync::mpsc::channel;
 use async_stream::stream;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_transcribestreaming::primitives::Blob;
-use aws_sdk_transcribestreaming::types::{AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream};
 use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
-use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use clap::Parser;
 
 use poem::{Endpoint, EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
@@ -26,7 +22,6 @@ use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
 
 use tokio::select;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::Stream;
 use serde::{Deserialize, Serialize};
 use lesson::{LessonsManager};
@@ -55,28 +50,6 @@ enum ReplyEvent {
     Transcribed(String),
     Translated(String),
     Synthesized(Vec<u8>),
-}
-
-
-async fn translate(client: &aws_sdk_translate::Client, transcript: Option<String>, source_lang_code: Option<String>) -> Option<String> {
-    let res = client.translate_text()
-        .set_text(transcript)
-        .set_source_language_code(Some("zh".to_string()))
-        .set_target_language_code(Some("en".to_string()))
-        .send().await;
-    res.expect("failed to translate").translated_text
-}
-
-async fn synthesize(client: &aws_sdk_polly::Client, transcript: String) -> Option<Vec<u8>> {
-    let res = client.synthesize_speech()
-        .set_text(Some(transcript))
-        .voice_id("Amy".into())
-        .output_format("pcm".into())
-        .language_code("en-US".into())
-        // .language_code("cmn-CN".into())
-        .send().await;
-    let bs = res.expect("failed to translate").audio_stream.collect().await.ok()?;
-    Some(bs.to_vec())
 }
 
 #[derive(Clone)]
@@ -171,7 +144,9 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
                 output = transcribe_rx.recv() => {
                     if let Ok(transcript) = output {
                         println!("Transcribed: {}", transcript);
-                        socket.send(Message::Text(transcript)).await.expect("failed to send");
+                        let evt = LiveLessonTextEvent::Transcription { text: transcript.clone() };
+                        let json = serde_json::to_string(&evt).expect("failed to serialize");
+                        let _ = socket.send(Message::Text(json)).await.expect("failed to send");
                     }
                 },
             }
@@ -281,26 +256,3 @@ impl Error for StreamTranscriptionError {
     }
 }
 
-fn process(translate_client: aws_sdk_translate::Client,
-               polly_client: aws_sdk_polly::Client,
-               res: Result<String, StreamTranscriptionError>) -> impl Stream<Item=Result<ReplyEvent, StreamTranscriptionError>> {
-    stream! {
-        match res {
-            Ok(transcription) => {
-                yield Ok(ReplyEvent::Transcribed(transcription.clone()));
-                let translated = translate(&translate_client, Some(transcription), Some("en".to_string())).await;
-                if let Some(has) = translated {
-                    yield Ok(ReplyEvent::Translated(has.clone()));
-                    println!("Translated: {}", has);
-                    if let Some(synthesized) = synthesize(&polly_client, has).await {
-                        yield Ok(ReplyEvent::Synthesized(synthesized));
-                    }
-                }
-            },
-            Err(e) => {
-                yield Err(e);
-            }
-        }
-
-    }
-}
