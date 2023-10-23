@@ -22,6 +22,7 @@ futures-util = "0.3.28"
 #symphonia-format-mkv = "0.5.3"
 symphonia = { version = "0.5.3", features = ["mkv", "pcm"] }
 serde = { version = "1.0.189", features = ["derive"] }
+serde_json = { version = "1.0.107", features = [] }
 
 [dependencies.poem]
 version = "1.3.58"

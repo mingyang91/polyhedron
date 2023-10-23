@@ -1,15 +1,20 @@
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use std::collections::BTreeMap;
+use std::io::BufRead;
 use async_stream::stream;
 use aws_config::SdkConfig;
-use aws_sdk_polly::types::VoiceId;
+use aws_sdk_polly::primitives::ByteStream;
+use aws_sdk_polly::types::{Engine, OutputFormat, SpeechMarkType, VoiceId};
 use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use aws_sdk_transcribestreaming::primitives::Blob;
 use aws_sdk_transcribestreaming::types::{AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream};
+use clap::builder::TypedValueParser;
 use futures_util::{Stream, StreamExt, TryStreamExt};
+use futures_util::future::try_join;
+use serde::{Deserialize, Serialize};
 
-use tokio::select;
+use tokio::{select, try_join};
 use crate::StreamTranscriptionError;
 
 #[derive(Clone, Debug)]
@@ -297,6 +302,10 @@ impl VoiceLesson {
     pub(crate) fn voice_channel(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
         self.inner.voice_lesson.subscribe()
     }
+
+    pub(crate) fn lip_sync_channel(&self) -> tokio::sync::broadcast::Receiver<Vec<Viseme>> {
+        self.inner.lip_sync_tx.subscribe()
+    }
 }
 
 impl From<InnerVoiceLesson> for VoiceLesson {
@@ -318,6 +327,7 @@ impl From<Arc<InnerVoiceLesson>> for VoiceLesson {
 struct InnerVoiceLesson {
     parent: LangLesson,
     voice: VoiceId,
+    lip_sync_tx: tokio::sync::broadcast::Sender<Vec<Viseme>>,
     voice_lesson: tokio::sync::broadcast::Sender<Vec<u8>>,
     drop_handler: Option<tokio::sync::oneshot::Sender<Signal>>,
 }
@@ -337,22 +347,18 @@ impl InnerVoiceLesson {
         let mut translate_rx = parent.inner.translated_tx.subscribe();
         let (voice_lesson, _) = tokio::sync::broadcast::channel::<Vec<u8>>(128);
         let shared_voice_lesson = voice_lesson.clone();
+        let (lip_sync_tx, _) = tokio::sync::broadcast::channel::<Vec<Viseme>>(128);
+        let shared_lip_sync_tx = lip_sync_tx.clone();
         let client = parent.inner.parent.inner.parent.polly_client.clone();
         // let lang: LanguageCode = parent.inner.lang.clone().parse().expect("Invalid language code");
         tokio::spawn(async move {
             let fut = async {
                 while let Ok(translated) = translate_rx.recv().await {
-                    let res = client.synthesize_speech()
-                        .set_text(Some(translated))
-                        .voice_id(shared_voice_id.clone())
-                        .output_format("pcm".into())
-                        // .language_code(lang)
-                        // .language_code("cmn-CN".into())
-                        .send()
-                        .await;
+                    let res = synthesize_speech(&client, translated, shared_voice_id.clone()).await;
                     match res {
-                        Ok(mut synthesized) => {
-                            while let Some(Ok(bytes)) = synthesized.audio_stream.next().await {
+                        Ok((vec, mut audio_stream)) => {
+                            let _ = shared_lip_sync_tx.send(vec);
+                            while let Some(Ok(bytes)) = audio_stream.next().await {
                                 let _ = &shared_voice_lesson.send(bytes.to_vec());
                             }
                         },
@@ -364,7 +370,12 @@ impl InnerVoiceLesson {
                 Ok(())
             };
             select! {
-                _ = fut => {}
+                res = fut => match res {
+                    Ok(_) => {}
+                    Err(e) => {
+                        println!("Error: {:?}", e);
+                    }
+                },
                 _ = rx => {}
             }
         });
@@ -372,6 +383,7 @@ impl InnerVoiceLesson {
         InnerVoiceLesson {
             parent,
             voice,
+            lip_sync_tx,
             voice_lesson,
             drop_handler: Some(tx),
         }
@@ -409,5 +421,47 @@ fn to_stream(mut output: StartStreamTranscriptionOutput) -> impl Stream<Item=Res
             }
         }
     }
+}
+
+// {"time":180,"type":"viseme","value":"r"}
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub(crate) struct Viseme {
+    time: u32,
+    value: String,
+}
+
+#[derive(Debug)]
+enum SynthesizeError {
+    Polly(aws_sdk_polly::Error),
+    Transmitting(aws_sdk_polly::error::BoxError),
+}
+
+async fn synthesize_speech(client: &aws_sdk_polly::Client,
+                           text: String,
+                           voice_id: VoiceId) -> Result<(Vec<Viseme>, ByteStream), SynthesizeError> {
+    let audio_fut = client.synthesize_speech()
+        .engine(Engine::Neural)
+        .set_text(Some(text.clone()))
+        .voice_id(voice_id.clone())
+        .output_format(OutputFormat::Pcm)
+        .send();
+    let visemes_fut = client.synthesize_speech()
+        .engine(Engine::Neural)
+        .set_text(Some(text))
+        .voice_id(voice_id)
+        .speech_mark_types(SpeechMarkType::Viseme)
+        .output_format(OutputFormat::Json)
+        .send();
+    let (audio, visemes) = try_join(audio_fut, visemes_fut)
+        .await
+        .map_err(|e| SynthesizeError::Polly(e.into()))?;
+    let visemes = visemes.audio_stream.collect().await
+        .map_err(|e| SynthesizeError::Transmitting(e.into()))?.to_vec();
+    let parsed: Vec<Viseme> = visemes
+        .lines()
+        .filter_map(|line| line.ok())
+        .filter_map(|line| serde_json::from_str::<Viseme>(&line).ok())
+        .collect();
+    Ok((parsed, audio.audio_stream))
 }
 

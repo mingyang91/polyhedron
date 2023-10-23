@@ -29,7 +29,8 @@ let bufferSize = 2048,
 //vars
 let audioElement = document.querySelector('audio'),
     finalWord = false,
-    resultText = document.getElementById('ResultText'),
+    translationText = document.getElementById('Translation'),
+    transcriptionText = document.getElementById('Transcription'),
     removeLastSentence = true,
     streamStreaming = false;
 
@@ -134,14 +135,21 @@ socket.onmessage = function (msg) {
         audioQueue.next(msg.data)
     } else {
         // text
-        onSpeechData(msg.data)
+        const evt = JSON.parse(msg.data)
+        if (evt.type === 'Translation') {
+            onSpeechData(transcriptionText, evt.text)
+        } else if (evt.type === 'Transcription') {
+            onSpeechData(translationText, evt.text)
+        } else {
+            console.log(evt.visemes)
+        }
     }
 }
 socket.onclose = function () {
     processor.stop()
 }
 
-function onSpeechData(data) {
+function onSpeechData(resultText, data) {
     var dataFinal = false;
 
     if (dataFinal === false) {

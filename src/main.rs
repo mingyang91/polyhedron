@@ -28,8 +28,9 @@ use poem::web::{Data, Query};
 use tokio::select;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::Stream;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use lesson::{LessonsManager};
+use crate::lesson::Viseme;
 
 mod lesson;
 
@@ -149,7 +150,10 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
                 msg = socket.next() => {
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
-                            origin_tx.send(bin.to_vec()).await.expect("failed to send");
+                            if origin_tx.send(bin.to_vec()).await.is_err() {
+                                println!("tx closed");
+                                break;
+                            }
                         },
                         Some(Ok(_)) => {
                             println!("Other: {:?}", msg);
@@ -158,7 +162,7 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
                             println!("Error: {:?}", e);
                         },
                         None => {
-                            socket.close().await.expect("failed to close");
+                            let _ = socket.close().await;
                             println!("Other: {:?}", msg);
                             break;
                         }
@@ -183,6 +187,14 @@ pub struct LessonListenerQuery {
     voice: String,
 }
 
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum LiveLessonTextEvent {
+    Transcription { text: String },
+    Translation { text: String },
+    LipSync{ visemes: Vec<Viseme> },
+}
+
 #[handler]
 async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>, ws: WebSocket) -> impl IntoResponse {
     let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
@@ -199,25 +211,38 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
         let mut translate_rx = lang_lesson.translated_channel();
         let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
         let mut voice_rx = voice_lesson.voice_channel();
+        let mut lip_sync_rx = voice_lesson.lip_sync_channel();
 
         loop {
             select! {
                 transcript = transcript_rx.recv() => {
                     if let Ok(transcript) = transcript {
-                        println!("Transcribed: {}", transcript);
-                        let _ = socket.send(Message::Text(transcript)).await;
+                        let evt = LiveLessonTextEvent::Transcription { text: transcript };
+                        let json = serde_json::to_string(&evt).expect("failed to serialize");
+                        println!("Transcribed: {}", json);
+                        let _ = socket.send(Message::Text(json)).await;
                     }
                 },
                 translated = translate_rx.recv() => {
                     if let Ok(translated) = translated {
-                        println!("Translated: {}", translated);
-                        let _ = socket.send(Message::Text(translated)).await;
+                        let evt = LiveLessonTextEvent::Translation { text: translated };
+                        let json = serde_json::to_string(&evt).expect("failed to serialize");
+                        println!("Translated: {}", json);
+                        let _ = socket.send(Message::Text(json)).await;
                     }
                 },
                 voice = voice_rx.recv() => {
                     if let Ok(voice) = voice {
                         println!("Synthesized: {:?}", voice.len());
                         let _ = socket.send(Message::Binary(voice)).await;
+                    }
+                },
+                visemes = lip_sync_rx.recv() => {
+                    if let Ok(visemes) = visemes {
+                        let evt = LiveLessonTextEvent::LipSync { visemes };
+                        let json = serde_json::to_string(&evt).expect("failed to serialize");
+                        println!("Visemes: {:?}", json);
+                        let _ = socket.send(Message::Text(json)).await;
                     }
                 },
             }
