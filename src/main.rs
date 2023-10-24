@@ -6,24 +6,20 @@
 #![allow(clippy::result_large_err)]
 
 use std::default::Default;
-use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
-use std::future::Future;
-use async_stream::stream;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
 use clap::Parser;
 
-use poem::{Endpoint, EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
-use futures_util::{Sink, SinkExt, TryFutureExt, TryStreamExt};
+use poem::{EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
+use futures_util::{SinkExt};
 use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
 use poem::web::websocket::{Message, WebSocket};
 use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
 
 use tokio::select;
-use tokio_stream::Stream;
 use serde::{Deserialize, Serialize};
+use whisper_rs::WhisperContext;
 use lesson::{LessonsManager};
 use crate::lesson::Viseme;
 
@@ -46,13 +42,6 @@ struct Opt {
 }
 
 #[derive(Clone)]
-enum ReplyEvent {
-    Transcribed(String),
-    Translated(String),
-    Synthesized(Vec<u8>),
-}
-
-#[derive(Clone)]
 struct Context {
     lessons_manager: LessonsManager,
 }
@@ -60,6 +49,9 @@ struct Context {
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
+    let wc = WhisperContext::new("/Users/famer.me/Downloads/ggml-base.bin");
+    let wc = wc.expect("failed to load whisper context");
+    let _ = wc.create_state().expect("failed to create state");
 
     let Opt {
         region,
@@ -224,35 +216,3 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
         }
     })
 }
-
-#[derive(Debug)]
-enum StreamTranscriptionError {
-    EstablishStreamError(Box<dyn Error + Send + Sync>),
-    TranscriptResultStreamError(Box<dyn Error + Send + Sync>),
-    Shutdown,
-    Unknown
-}
-
-
-impl Display for StreamTranscriptionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StreamTranscriptionError::EstablishStreamError(e) => write!(f, "EstablishStreamError: {}", e),
-            StreamTranscriptionError::TranscriptResultStreamError(e) => write!(f, "TranscriptResultStreamError: {}", e),
-            StreamTranscriptionError::Shutdown => write!(f, "Shutdown"),
-            StreamTranscriptionError::Unknown => write!(f, "Unknown"),
-        }
-    }
-}
-
-impl Error for StreamTranscriptionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            StreamTranscriptionError::EstablishStreamError(e) => Some(e.as_ref()),
-            StreamTranscriptionError::TranscriptResultStreamError(e) => Some(e.as_ref()),
-            StreamTranscriptionError::Shutdown => None,
-            StreamTranscriptionError::Unknown => None,
-        }
-    }
-}
-

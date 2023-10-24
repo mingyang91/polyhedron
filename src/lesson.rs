@@ -1,6 +1,8 @@
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt::{Display, Formatter};
 use std::io::BufRead;
 use async_stream::stream;
 use aws_config::SdkConfig;
@@ -9,13 +11,11 @@ use aws_sdk_polly::types::{Engine, OutputFormat, SpeechMarkType, VoiceId};
 use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use aws_sdk_transcribestreaming::primitives::Blob;
 use aws_sdk_transcribestreaming::types::{AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream};
-use clap::builder::TypedValueParser;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use futures_util::future::try_join;
 use serde::{Deserialize, Serialize};
 
-use tokio::{select, try_join};
-use crate::StreamTranscriptionError;
+use tokio::select;
 
 #[derive(Clone, Debug)]
 pub struct LessonsManager {
@@ -42,7 +42,7 @@ impl LessonsManager {
                                       id: u32,
                                       speaker_lang: LanguageCode) -> Lesson {
         let mut map = self.lessons.write().await;
-        let lesson: Lesson = InnerLesson::new(self.clone(), id, speaker_lang).into();
+        let lesson: Lesson = InnerLesson::new(self.clone(), speaker_lang).into();
         map.insert(id, lesson.clone());
         lesson
     }
@@ -101,7 +101,6 @@ impl From<InnerLesson> for Lesson {
 #[derive(Debug)]
 struct InnerLesson {
     parent: LessonsManager,
-    id: u32,
     speaker_lang: LanguageCode,
     speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<u8>>,
     speaker_transcript: tokio::sync::broadcast::Sender<String>,
@@ -112,7 +111,6 @@ struct InnerLesson {
 impl InnerLesson {
     fn new(
         parent: LessonsManager,
-        id: u32,
         speaker_lang: LanguageCode
     ) -> InnerLesson {
         let (speaker_transcript, _) = tokio::sync::broadcast::channel::<String>(128);
@@ -137,16 +135,16 @@ impl InnerLesson {
                     .audio_stream(input_stream.into())
                     .send()
                     .await
-                    .map_err(|e| crate::StreamTranscriptionError::EstablishStreamError(Box::new(e)))?;
+                    .map_err(|e| StreamTranscriptionError::EstablishStreamError(Box::new(e)))?;
 
-                let mut output_stream = to_stream(output);
+                let output_stream = to_stream(output);
                 output_stream
                     .try_for_each(|text| async {
                         let _ = shared_speaker_transcript.send(text);
                         Ok(())
                     })
                     .await?;
-                Ok(()) as Result<(), crate::StreamTranscriptionError>
+                Ok(()) as Result<(), StreamTranscriptionError>
             };
             select! {
                 res = fut => {
@@ -160,10 +158,9 @@ impl InnerLesson {
 
         InnerLesson {
             parent,
-            id,
             speaker_lang,
             speaker_voice_channel,
-            speaker_transcript: speaker_transcript,
+            speaker_transcript,
             lang_lessons: RwLock::new(BTreeMap::new()),
             drop_handler: Some(drop_handler),
         }
@@ -181,10 +178,17 @@ impl Drop for InnerLesson {
 
 struct InnerLangLesson {
     parent: Lesson,
-    lang: String,
     translated_tx: tokio::sync::broadcast::Sender<String>,
     voice_lessons: RwLock<BTreeMap<VoiceId, Weak<InnerVoiceLesson>>>,
     drop_handler: Option<tokio::sync::oneshot::Sender<Signal>>,
+}
+
+impl Drop for InnerLangLesson {
+    fn drop(&mut self) {
+        if let Some(tx) = self.drop_handler.take() {
+            let _ = tx.send(Signal::Stop);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -219,7 +223,7 @@ impl LangLesson {
         parent: Lesson,
         lang: String,
     ) -> Self {
-        let shared_lang = lang.clone();;
+        let shared_lang = lang.clone();
         let shared_speaker_lang = parent.inner.speaker_lang.clone();
         let (translated_tx, _) = tokio::sync::broadcast::channel::<String>(128);
         let shared_translated_tx = translated_tx.clone();
@@ -245,7 +249,6 @@ impl LangLesson {
                         Err(e) => {
                             return Err(e);
                         }
-                        _ => {}
                     }
                 }
                 Ok(())
@@ -262,7 +265,6 @@ impl LangLesson {
         });
         InnerLangLesson {
             parent,
-            lang,
             translated_tx,
             voice_lessons: RwLock::new(BTreeMap::new()),
             drop_handler: Some(drop_handler),
@@ -325,8 +327,6 @@ impl From<Arc<InnerVoiceLesson>> for VoiceLesson {
 }
 
 struct InnerVoiceLesson {
-    parent: LangLesson,
-    voice: VoiceId,
     lip_sync_tx: tokio::sync::broadcast::Sender<Vec<Viseme>>,
     voice_lesson: tokio::sync::broadcast::Sender<Vec<u8>>,
     drop_handler: Option<tokio::sync::oneshot::Sender<Signal>>,
@@ -381,8 +381,6 @@ impl InnerVoiceLesson {
         });
 
         InnerVoiceLesson {
-            parent,
-            voice,
             lip_sync_tx,
             voice_lesson,
             drop_handler: Some(tx),
@@ -417,7 +415,7 @@ fn to_stream(mut output: StartStreamTranscriptionOutput) -> impl Stream<Item=Res
                         }
                     }
                 }
-                otherwise => yield Err(StreamTranscriptionError::Unknown),
+                _ => yield Err(StreamTranscriptionError::Unknown),
             }
         }
     }
@@ -463,5 +461,34 @@ async fn synthesize_speech(client: &aws_sdk_polly::Client,
         .filter_map(|line| serde_json::from_str::<Viseme>(&line).ok())
         .collect();
     Ok((parsed, audio.audio_stream))
+}
+
+
+#[derive(Debug)]
+enum StreamTranscriptionError {
+    EstablishStreamError(Box<dyn Error + Send + Sync>),
+    TranscriptResultStreamError(Box<dyn Error + Send + Sync>),
+    Unknown
+}
+
+
+impl Display for StreamTranscriptionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StreamTranscriptionError::EstablishStreamError(e) => write!(f, "EstablishStreamError: {}", e),
+            StreamTranscriptionError::TranscriptResultStreamError(e) => write!(f, "TranscriptResultStreamError: {}", e),
+            StreamTranscriptionError::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+impl Error for StreamTranscriptionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            StreamTranscriptionError::EstablishStreamError(e) => Some(e.as_ref()),
+            StreamTranscriptionError::TranscriptResultStreamError(e) => Some(e.as_ref()),
+            StreamTranscriptionError::Unknown => None,
+        }
+    }
 }
 
