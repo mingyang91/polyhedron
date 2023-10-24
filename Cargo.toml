@@ -16,6 +16,7 @@ tracing-subscriber = "0.3.17"
 futures-util = "0.3.28"
 serde = { version = "1.0.189", features = ["derive"] }
 serde_json = { version = "1.0.107", features = [] }
+serde_yaml = "0.9.25"
 whisper-rs = {  version = "0.8.0" , features = ["coreml"] }
 
 [dependencies.poem]

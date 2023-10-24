@@ -1,0 +1,22 @@
+server:
+    port: 8080
+    host: ::1
+whisper:
+    n_threads: 4
+    step_ms: 500
+    length_ms: 5000
+    keep_ms: 200
+    capture_id: -1
+    max_tokens: 32
+    audio_ctx: 0
+    vad_thold: 0.6
+    freq_thold: 100.0
+    speed_up: false
+    translate: false
+    no_fallback: false
+    print_special: false
+    no_context: true
+    no_timestamps: false
+    tinydiarize: false
+    language: "en"
+    model: "models/ggml-base.bin"

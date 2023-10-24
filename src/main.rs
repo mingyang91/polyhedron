@@ -17,13 +17,17 @@ use poem::web::websocket::{Message, WebSocket};
 use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
 
-use tokio::select;
+use tokio::{fs, select};
 use serde::{Deserialize, Serialize};
 use whisper_rs::WhisperContext;
 use lesson::{LessonsManager};
+use crate::config::Config;
 use crate::lesson::Viseme;
+use crate::whisper::run_whisper;
 
 mod lesson;
+mod config;
+mod whisper;
 
 
 #[derive(Debug, Parser)]
@@ -46,12 +50,25 @@ struct Context {
     lessons_manager: LessonsManager,
 }
 
+#[derive(Debug)]
+enum Error {
+    IoError(std::io::Error),
+    ConfigError(serde_yaml::Error),
+}
+
+async fn load_config() -> Result<Config, Error> {
+    let config_str = fs::read_to_string("config.yaml").await.map_err(|e| Error::IoError(e))?;
+    let config: Config = serde_yaml::from_str(config_str.as_str())
+        .map_err(|e| Error::ConfigError(e))?;
+    return Ok(config)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
-    let wc = WhisperContext::new("/Users/famer.me/Downloads/ggml-base.bin");
-    let wc = wc.expect("failed to load whisper context");
-    let _ = wc.create_state().expect("failed to create state");
+
+    let config = load_config().await.expect("failed to load config");
+    run_whisper(&config).await;
 
     let Opt {
         region,
