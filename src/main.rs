@@ -17,17 +17,17 @@ use poem::web::websocket::{Message, WebSocket};
 use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
 
-use tokio::{fs, select};
+use tokio::{select};
 use serde::{Deserialize, Serialize};
-use whisper_rs::WhisperContext;
 use lesson::{LessonsManager};
-use crate::config::Config;
+use crate::config::CONFIG;
 use crate::lesson::Viseme;
-use crate::whisper::run_whisper;
+use crate::whisper::WhisperHandler;
 
 mod lesson;
 mod config;
 mod whisper;
+mod group;
 
 
 #[derive(Debug, Parser)]
@@ -50,25 +50,10 @@ struct Context {
     lessons_manager: LessonsManager,
 }
 
-#[derive(Debug)]
-enum Error {
-    IoError(std::io::Error),
-    ConfigError(serde_yaml::Error),
-}
-
-async fn load_config() -> Result<Config, Error> {
-    let config_str = fs::read_to_string("config.yaml").await.map_err(|e| Error::IoError(e))?;
-    let config: Config = serde_yaml::from_str(config_str.as_str())
-        .map_err(|e| Error::ConfigError(e))?;
-    return Ok(config)
-}
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
-
-    let config = load_config().await.expect("failed to load config");
-    run_whisper(&config).await;
 
     let Opt {
         region,
@@ -107,7 +92,8 @@ async fn main() -> Result<(), std::io::Error> {
         .at("lesson-speaker", StaticFileEndpoint::new("./static/index.html"))
         .at("lesson-listener", StaticFileEndpoint::new("./static/index.html"))
         .data(ctx);
-    let listener = TcpListener::bind("[::]:8080");
+    let addr = format!("{}:{}", CONFIG.server.host, CONFIG.server.port);
+    let listener = TcpListener::bind(addr);
     let server = Server::new(listener);
 
     server.run(app).await
@@ -127,11 +113,20 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
     ws.on_upgrade(|mut socket| async move {
         let origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
+        let whisper = WhisperHandler::new(CONFIG.whisper.clone()).expect("failed to create whisper");
+        let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {
+                w = whisper_transcribe_rx.recv() => {
+                    let Ok(txt) = w else {
+                        continue
+                    };
+                    println!("Whisper: {:?}", txt)
+                }
                 msg = socket.next() => {
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
+                            let _ = whisper.send(bin.clone()).await; // whisper test
                             if origin_tx.send(bin.to_vec()).await.is_err() {
                                 println!("tx closed");
                                 break;
@@ -217,7 +212,6 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
                 },
                 voice = voice_rx.recv() => {
                     if let Ok(voice) = voice {
-                        println!("Synthesized: {:?}", voice.len());
                         let _ = socket.send(Message::Binary(voice)).await;
                     }
                 },
@@ -225,7 +219,6 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
                     if let Ok(visemes) = visemes {
                         let evt = LiveLessonTextEvent::LipSync { visemes };
                         let json = serde_json::to_string(&evt).expect("failed to serialize");
-                        println!("Visemes: {:?}", json);
                         let _ = socket.send(Message::Text(json)).await;
                     }
                 },
