@@ -1,10 +1,11 @@
+use std::collections::VecDeque;
 use std::ffi::c_int;
 use std::fmt::{Debug, Display, Formatter};
 use std::thread::sleep;
 use std::time::Duration;
 use lazy_static::lazy_static;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperState};
+use whisper_rs::{convert_integer_to_float_audio, WhisperState, WhisperContext, FullParams};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 use crate::config::{WhisperParams, CONFIG};
 use crate::group::GroupedWithin;
@@ -78,22 +79,28 @@ pub struct WhisperHandler {
 
 impl WhisperHandler {
     pub(crate) fn new(config: WhisperParams) -> Result<Self, Error> {
+        let n_samples_step: usize = (config.step_ms * WHISPER_SAMPLE_RATE / 1000) as usize;
+        let n_samples_len: usize = (config.length_ms * WHISPER_SAMPLE_RATE / 1000) as usize;
         let n_samples_keep: usize = (config.keep_ms * WHISPER_SAMPLE_RATE / 1000) as usize;
+        let n_new_line: usize = 1.max(config.length_ms / config.step_ms - 1) as usize;
+        let mut n_iter: usize = 0;
+
         let (stop_handle, mut stop_signal) = oneshot::channel();
         let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<u8>>(128);
         let mut grouped = GroupedWithin::new(
-            n_samples_keep,
-            Duration::from_secs(5),
+            n_samples_step * 2,
+            Duration::from_millis(config.step_ms as u64),
             pcm_rx,
-            1024
+            u16::MAX as usize
         );
         let (transcription_tx, _) = broadcast::channel::<Vec<Segment>>(128);
         let shared_transcription_tx = transcription_tx.clone();
         let mut state = WHISPER_CONTEXT.create_state()
             .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
         tokio::task::spawn_blocking(move || {
-            let mut tokens: Vec<c_int> = Default::default();
-            let mut pcm_f32: Vec<f32> = Default::default();
+            let mut prompt_tokens: Vec<c_int> = Default::default();
+            let mut pcm_f32: VecDeque<f32> = VecDeque::from(vec![0f32; 30 * WHISPER_SAMPLE_RATE as usize]);
+            let mut last_offset: usize = 0;
             while let Err(oneshot::error::TryRecvError::Empty) = stop_signal.try_recv() {
                 let new_pcm_f32 = match grouped.next() {
                     Err(mpsc::error::TryRecvError::Disconnected) => break,
@@ -106,22 +113,39 @@ impl WhisperHandler {
                     }
                 };
 
+                let params = config.to_full_params(prompt_tokens.as_slice());
                 pcm_f32.extend(new_pcm_f32);
-                match inference(&mut state, &config, n_samples_keep, &mut tokens, &mut pcm_f32) {
-                    Ok(segments) => {
-                        if segments.is_empty() {
+                if pcm_f32.len() > n_samples_len + n_samples_keep {
+                    let _ = pcm_f32.drain(0..(pcm_f32.len() - n_samples_keep - n_samples_len)).len();
+                }
+                pcm_f32.make_contiguous();
+                let (data, _) = pcm_f32.as_slices();
+                let segments = match inference(&mut state, params, data, 0) {
+                    Ok((offset, result)) => {
+                        last_offset = offset;
+                        if result.is_empty() {
                             continue
                         }
-                        if let Err(e) = shared_transcription_tx.send(segments) {
-                            tracing::error!("failed to send transcription: {}", e);
-                            break
-                        }
+                        result
                     }
                     Err(err) => {
-                        tracing::error!("failed to run whisper: {}", err);
+                        tracing::warn!("failed to inference: {}", err);
                         continue
-                        // break
                     }
+                };
+
+                n_iter = n_iter + 1;
+
+                if n_iter % n_new_line == 0 {
+                    if let Err(e) = new_line(&mut pcm_f32, n_samples_keep, &config, &mut state, segments.len(), &mut prompt_tokens) {
+                        tracing::warn!("failed to new_line: {}", e);
+                    }
+                    tracing::debug!("LINE: {}", segments.first().unwrap().text);
+
+                    if let Err(e) = shared_transcription_tx.send(segments) {
+                        tracing::error!("failed to send transcription: {}", e);
+                        break
+                    };
                 }
             }
         });
@@ -143,17 +167,13 @@ impl WhisperHandler {
 
 fn inference(
     state: &mut WhisperState,
-    config: &WhisperParams,
-    n_samples_keep: usize,
-    prompt_tokens: &mut Vec<c_int>,
-    pcm_f32: &mut Vec<f32>
-) -> Result<Vec<Segment>, Error> {
-    let params = config.to_full_params(prompt_tokens.as_slice());
+    params: FullParams,
+    pcm_f32: &[f32],
+    mut offset: usize,
+) -> Result<(usize, Vec<Segment>), Error> {
 
-    let st = std::time::Instant::now();
-    let _ = state.full(params, pcm_f32.as_slice())
+    let _ = state.full(params, pcm_f32)
         .map_err(|e| Error::whisper_error("failed to initialize WhisperState", e))?;
-    let et = std::time::Instant::now();
 
     let num_segments = state
         .full_n_segments()
@@ -163,28 +183,36 @@ fn inference(
         let segment = state
             .full_get_segment_text(i)
             .map_err(|e| Error::whisper_error("failed to get segment", e))?;
-        let start_timestamp = state
+        let timestamp_offset: i64 = (offset * 1000 / WHISPER_SAMPLE_RATE as usize) as i64;
+        let start_timestamp: i64 = timestamp_offset + 10 * state
             .full_get_segment_t0(i)
             .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
-        let end_timestamp = state
+        let end_timestamp: i64 = timestamp_offset + 10 * state
             .full_get_segment_t1(i)
             .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
-        tracing::debug!("[{} - {}]: {}", start_timestamp, end_timestamp, segment);
+        // tracing::trace!("{}", segment);
         segments.push(Segment { start_timestamp, end_timestamp, text: segment });
+    }
+
+    Ok((offset, segments))
+}
+
+fn new_line(pcm_f32: &mut VecDeque<f32>,
+            n_samples_keep: usize,
+            config: &WhisperParams,
+            state: &mut WhisperState,
+            num_segments: usize,
+            prompt_tokens: &mut Vec<c_int>) -> Result<(), Error> {
+
+    // keep the last n_samples_keep samples from pcm_f32
+    if pcm_f32.len() > n_samples_keep {
+        let _ = pcm_f32.drain(0..(pcm_f32.len() - n_samples_keep)).len();
     }
 
     if !config.no_context {
         prompt_tokens.clear();
 
-        // keep the last n_samples_keep samples from pcm_f32
-        if pcm_f32.len() > n_samples_keep {
-            let _ = pcm_f32.drain(0..(pcm_f32.len() - n_samples_keep)).collect::<Vec<_>>();
-        }
-
-        let n_segments = state
-            .full_n_segments()
-            .map_err(|e| Error::whisper_error("failed to get number of segments", e))?;
-        for i in 0..n_segments {
+        for i in 0..num_segments as c_int {
             let token_count = state
                 .full_n_tokens(i)
                 .map_err(|e| Error::whisper_error("failed to get number of tokens", e))?;
@@ -196,9 +224,7 @@ fn inference(
             }
         }
     }
-
-    tracing::trace!("took {}ms", (et - st).as_millis());
-    Ok(segments)
+    Ok(())
 }
 
 impl Drop for WhisperHandler {

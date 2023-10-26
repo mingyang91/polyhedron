@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::{select};
 use tokio::time::sleep;
@@ -17,13 +18,13 @@ where I: 'static + Send {
                buffer: usize) -> Self {
         let (tx, outlet) = channel::<Vec<I>>(buffer);
         tokio::spawn(async move {
-            let mut window = Vec::with_capacity(group_size);
+            let mut window = VecDeque::with_capacity(group_size);
 
             loop {
                 let grouped_fut = async {
                     while let Some(c) = inlet.recv().await {
                         window.extend(c);
-                        if window.len() > group_size {
+                        if window.len() >= group_size {
                             let will_send: Vec<I> = window.drain(0..group_size).collect();
                             return Some(will_send)
                         }
@@ -31,17 +32,21 @@ where I: 'static + Send {
                     return None
                 };
 
-                let grouped = select! {
+                let grouped: Vec<I> = select! {
                     _ = sleep(window_time) => {
                         window.drain(..).collect()
                     },
                     grouped_opt = grouped_fut => {
                         match grouped_opt {
                             None => break,
-                            Some(grouped) => grouped
+                            Some(group) => group
                         }
                     }
                 };
+
+                if grouped.is_empty() {
+                    continue
+                }
 
                 if let Err(e) = tx.send(grouped).await {
                     tracing::error!("{}", e);

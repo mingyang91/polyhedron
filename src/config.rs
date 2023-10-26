@@ -1,4 +1,5 @@
 use std::ffi::c_int;
+use std::fs;
 use std::net::IpAddr;
 use lazy_static::lazy_static;
 use serde::{Deserialize};
@@ -24,8 +25,8 @@ lazy_static! {
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct WhisperParams {
     pub(crate) n_threads: Option<usize>,
-    // pub(crate) step_ms: u32,
-    // pub(crate) length_ms: u32,
+    pub(crate) step_ms: u32,
+    pub(crate) length_ms: u32,
     pub(crate) keep_ms: u32,
     pub(crate) max_tokens: u32,
     pub(crate) audio_ctx: u32,
@@ -52,7 +53,7 @@ impl WhisperParams {
         param.set_print_realtime(false);
         param.set_print_timestamps(!self.no_timestamps);
         param.set_translate(self.translate);
-        param.set_single_segment(false);
+        param.set_single_segment(true);
         param.set_max_tokens(self.max_tokens as i32);
         let lang = self.language.as_ref().map(|s| s.as_str());
         param.set_language(lang);
@@ -62,7 +63,7 @@ impl WhisperParams {
         param.set_speed_up(self.speed_up);
         // param.set_tdrz_enable(self.tinydiarize);
         if self.no_fallback {
-            param.set_temperature_inc(0.0);
+            param.set_temperature_inc(-1.0);
         }
         if self.no_context {
             param.set_tokens(&NONE);
