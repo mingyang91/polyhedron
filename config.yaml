@@ -3,9 +3,9 @@ server:
     host: ::1
 whisper:
 #    n_threads: 4
-    length_ms: 10000
+    length_ms: 5000
     keep_ms: 200
-    step_ms: 1000
+    step_ms: 500
     max_tokens: 0
     audio_ctx: 0
     vad_thold: 0.6
