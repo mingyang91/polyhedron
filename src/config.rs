@@ -1,5 +1,4 @@
 use std::ffi::c_int;
-use std::fs;
 use std::net::IpAddr;
 use lazy_static::lazy_static;
 use serde::{Deserialize};
@@ -87,9 +86,11 @@ pub struct Config {
     pub(crate) server: Server,
 }
 
-#[tokio::test]
-async fn load() {
-    let config_str = fs::read_to_string("config.yaml").expect("failed to read config file");
-    let params: Config = serde_yaml::from_str(config_str.as_str()).expect("failed to parse config file");
-    println!("{:?}", params);
+mod tests {
+    #[tokio::test]
+    async fn load() {
+        let config_str = tokio::fs::read_to_string("config.yaml").await.expect("failed to read config file");
+        let params: crate::config::Config = serde_yaml::from_str(config_str.as_str()).expect("failed to parse config file");
+        println!("{:?}", params);
+    }
 }

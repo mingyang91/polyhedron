@@ -115,10 +115,10 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
                             let _ = whisper.send(bin.to_vec()).await; // whisper test
-                            if let Err(e) = origin_tx.send(bin.to_vec()).await {
-                                tracing::warn!("failed to send voice: {}", e);
-                                break;
-                            }
+                            // if let Err(e) = origin_tx.send(bin.to_vec()).await {
+                            //     tracing::warn!("failed to send voice: {}", e);
+                            //     break;
+                            // }
                         },
                         Some(Ok(_)) => {
                             tracing::warn!("Other: {:?}", msg);
