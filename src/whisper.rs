@@ -9,6 +9,7 @@ use whisper_rs::{convert_integer_to_float_audio, WhisperState, WhisperContext};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 use crate::config::{WhisperParams, CONFIG};
 use crate::group::GroupedWithin;
+use crate::config::Config;
 
 lazy_static! {
     static ref WHISPER_CONTEXT: WhisperContext = {

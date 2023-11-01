@@ -5,30 +5,33 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::default::Default;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
 use clap::Parser;
+use std::default::Default;
+use std::sync::Arc;
 
-use poem::{EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
-use futures_util::{SinkExt};
+use futures_util::stream::StreamExt;
+use futures_util::SinkExt;
 use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
 use poem::web::websocket::{Message, WebSocket};
-use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
-
-use tokio::{select};
+use poem::{get, handler, listener::TcpListener, post, EndpointExt, IntoResponse, Route, Server};
+use tokio::{select, fs};
 use serde::{Deserialize, Serialize};
 use lesson::{LessonsManager};
 use crate::config::CONFIG;
 use crate::lesson::Viseme;
 use crate::whisper::WhisperHandler;
+use crate::class::{create_lesson, digital_human_list, enter_class, lesson_list};
+use crate::config::Config;
+use tokio_postgres::{Client, NoTls};
 
-mod lesson;
+mod class;
 mod config;
+mod lesson;
 mod whisper;
 mod group;
-
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -40,8 +43,23 @@ struct Opt {
 #[derive(Clone)]
 struct Context {
     lessons_manager: LessonsManager,
+    pg_client: Arc<Client>,
 }
 
+#[derive(Debug)]
+enum Error {
+    IoError(std::io::Error),
+    ConfigError(serde_yaml::Error),
+}
+
+async fn load_config() -> Result<Config, Error> {
+    let config_str = fs::read_to_string("config.yaml")
+        .await
+        .map_err(|e| Error::IoError(e))?;
+    let config: Config =
+        serde_yaml::from_str(config_str.as_str()).map_err(|e| Error::ConfigError(e))?;
+    return Ok(config);
+}
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
@@ -50,6 +68,8 @@ async fn main() -> Result<(), std::io::Error> {
     let Opt {
         region,
     } = Opt::parse();
+
+    let config = load_config().await.expect("failed to load config");
 
     let region_provider = RegionProviderChain::first_try(region.map(Region::new))
         .or_default_provider()
@@ -63,22 +83,41 @@ async fn main() -> Result<(), std::io::Error> {
         );
     }
 
+    let (client, conn) = tokio_postgres::connect(config.postgres_url.as_ref(), NoTls)
+        .await
+        .expect("Unable to connect to postgres");
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            println!("connection with pg is broken: {}", e);
+        }
+    });
     let shared_config = aws_config::from_env().region(region_provider).load().await;
     let ctx = Context {
         lessons_manager: LessonsManager::new(&shared_config),
+        pg_client: Arc::new(client),
     };
 
     let app = Route::new()
         .nest(
-        "/",
-        StaticFilesEndpoint::new("./static")
-            .show_files_listing()
-            .index_file("index.html"),
+            "/",
+            StaticFilesEndpoint::new("./static")
+                .show_files_listing()
+                .index_file("index.html"),
         )
         .at("/ws/lesson-speaker", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
-        .at("lesson-speaker", StaticFileEndpoint::new("./static/index.html"))
-        .at("lesson-listener", StaticFileEndpoint::new("./static/index.html"))
+        .at(
+            "lesson-speaker",
+            StaticFileEndpoint::new("./static/index.html"),
+        )
+        .at(
+            "lesson-listener",
+            StaticFileEndpoint::new("./static/index.html"),
+        )
+        .at("/lesson", post(create_lesson))
+        .at("/lesson/list", get(lesson_list))
+        .at("/digital_humans", get(digital_human_list))
+        .at("/enter", post(enter_class))
         .data(ctx);
     let addr = format!("{}:{}", CONFIG.server.host, CONFIG.server.port);
     let listener = TcpListener::bind(addr);
@@ -87,7 +126,6 @@ async fn main() -> Result<(), std::io::Error> {
     server.run(app).await
 }
 
-
 #[derive(Deserialize, Debug)]
 pub struct LessonSpeakerQuery {
     id: u32,
@@ -95,8 +133,18 @@ pub struct LessonSpeakerQuery {
 }
 
 #[handler]
-async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, ws: WebSocket) -> impl IntoResponse {
-    let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone().parse().expect("Not supported lang")).await;
+async fn stream_speaker(
+    ctx: Data<&Context>,
+    query: Query<LessonSpeakerQuery>,
+    ws: WebSocket,
+) -> impl IntoResponse {
+    let lesson = ctx
+        .lessons_manager
+        .create_lesson(
+            query.id,
+            query.lang.clone().parse().expect("Not supported lang"),
+        )
+        .await;
 
     ws.on_upgrade(|mut socket| async move {
         let origin_tx = lesson.voice_channel();
@@ -147,7 +195,6 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
     })
 }
 
-
 #[derive(Deserialize, Debug)]
 pub struct LessonListenerQuery {
     id: u32,
@@ -160,11 +207,15 @@ pub struct LessonListenerQuery {
 enum LiveLessonTextEvent {
     Transcription { text: String },
     Translation { text: String },
-    LipSync{ visemes: Vec<Viseme> },
+    LipSync { visemes: Vec<Viseme> },
 }
 
 #[handler]
-async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>, ws: WebSocket) -> impl IntoResponse {
+async fn stream_listener(
+    ctx: Data<&Context>,
+    query: Query<LessonListenerQuery>,
+    ws: WebSocket,
+) -> impl IntoResponse {
     let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
     tracing::debug!("listener param = {:?}", query);
 
