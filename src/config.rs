@@ -84,10 +84,17 @@ pub(crate) struct Server {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct Postgres {
+    pub(crate) addr: String,
+    pub(crate) user: String,
+    pub(crate) passwd: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Config {
     pub(crate) whisper: WhisperParams,
     pub(crate) server: Server,
-    pub(crate) postgres_url: String,
+    pub(crate) postgres: Postgres,
 }
 
 mod tests {

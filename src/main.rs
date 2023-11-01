@@ -83,7 +83,11 @@ async fn main() -> Result<(), std::io::Error> {
         );
     }
 
-    let (client, conn) = tokio_postgres::connect(config.postgres_url.as_ref(), NoTls)
+    let pg_uri = format!(
+        "postgresql://{}:{}@{}/postgres?keepalives=1",
+        config.postgres.user, config.postgres.passwd, config.postgres.addr
+    );
+    let (client, conn) = tokio_postgres::connect(pg_uri.as_ref(), NoTls)
         .await
         .expect("Unable to connect to postgres");
     tokio::spawn(async move {

@@ -19,3 +19,7 @@ whisper:
     tinydiarize: false
     language: "en"
     model: "models/ggml-base.bin"
+postgres:
+    addr: "127.0.0.1:5432"
+    user: "postgres"
+    passwd: "postgres"
