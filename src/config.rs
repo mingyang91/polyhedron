@@ -22,24 +22,31 @@ lazy_static! {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub(crate) struct WhisperParams {
-    pub(crate) n_threads: Option<usize>,
+pub(crate) struct WhisperConfig {
+    pub(crate) params: WhisperParams,
     pub(crate) step_ms: u32,
     pub(crate) length_ms: u32,
     pub(crate) keep_ms: u32,
+    pub(crate) model: String,
+    pub(crate) max_prompt_tokens: usize,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct WhisperParams {
+    pub(crate) n_threads: Option<usize>,
     pub(crate) max_tokens: u32,
     pub(crate) audio_ctx: u32,
-    // pub(crate) vad_thold: f32,
-    // pub(crate) freq_thold: f32,
     pub(crate) speed_up: bool,
     pub(crate) translate: bool,
     pub(crate) no_fallback: bool,
     pub(crate) print_special: bool,
-    pub(crate) no_context: bool,
+    pub(crate) print_realtime: bool,
+    pub(crate) print_progress: bool,
     pub(crate) no_timestamps: bool,
+    pub(crate) temperature_inc: f32,
+    pub(crate) single_segment: bool,
     // pub(crate) tinydiarize: bool,
     pub(crate) language: Option<String>,
-    pub(crate) model: String,
 }
 
 const NONE: [c_int;0] = [];
@@ -47,12 +54,12 @@ const NONE: [c_int;0] = [];
 impl WhisperParams {
     pub(crate) fn to_full_params<'a, 'b>(&'a self, tokens: &'b [c_int]) -> FullParams<'a, 'b> {
         let mut param = FullParams::new(Default::default());
-        param.set_print_progress(false);
+        param.set_print_progress(self.print_progress);
         param.set_print_special(self.print_special);
-        param.set_print_realtime(false);
+        param.set_print_realtime(self.print_realtime);
         param.set_print_timestamps(!self.no_timestamps);
         param.set_translate(self.translate);
-        param.set_single_segment(true);
+        param.set_single_segment(false);
         param.set_max_tokens(self.max_tokens as i32);
         let lang = self.language.as_ref().map(|s| s.as_str());
         param.set_language(lang);
@@ -61,14 +68,7 @@ impl WhisperParams {
         param.set_audio_ctx(self.audio_ctx as i32);
         param.set_speed_up(self.speed_up);
         // param.set_tdrz_enable(self.tinydiarize);
-        if self.no_fallback {
-            param.set_temperature_inc(-1.0);
-        }
-        if self.no_context {
-            param.set_tokens(&NONE);
-        } else {
-            param.set_tokens(&tokens);
-        }
+        param.set_temperature_inc(self.temperature_inc);
 
         param
     }
@@ -82,7 +82,7 @@ pub(crate) struct Server {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub(crate) whisper: WhisperParams,
+    pub(crate) whisper: WhisperConfig,
     pub(crate) server: Server,
 }
 

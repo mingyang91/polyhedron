@@ -200,9 +200,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-polly"
-version = "0.33.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a4157655fb2b0d28bb4b838e0b0b111ea14a19d53d8b406d80b9528eb3c1eae"
+checksum = "6950a413936042ea34341331eb2fe7635f33d760ffff3dd11afa4ad35d5151a5"
 dependencies = [
  "aws-credential-types",
  "aws-http",
@@ -273,9 +273,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-transcribestreaming"
-version = "0.33.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e004a8f20dfcca5e4548a5d071049bf704184c702832f78748588727f229336d"
+checksum = "bf1b3a068ad56440585dccc3210a537bbe9653b07897698339e0d04c234463d2"
 dependencies = [
  "aws-credential-types",
  "aws-http",
@@ -299,9 +299,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-translate"
-version = "0.33.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc4a37674add1d56a2e0dc7c5cbe41b8db4f352f117dc4ef5c892f3d58344d5b"
+checksum = "23f27dd4ee2f7aeb6736cb24bad9f0ef0bb08194bd598d8fa8e96261c6689409"
 dependencies = [
  "aws-credential-types",
  "aws-http",

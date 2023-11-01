@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use whisper_rs::{convert_integer_to_float_audio, WhisperState, WhisperContext};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
-use crate::config::{WhisperParams, CONFIG};
+use crate::config::{WhisperParams, CONFIG, WhisperConfig};
 use crate::group::GroupedWithin;
 
 lazy_static! {
@@ -69,6 +69,7 @@ pub struct Segment {
     pub start_timestamp: i64,
     pub end_timestamp: i64,
     pub text: String,
+    tokens: Vec<c_int>,
 }
 
 pub struct WhisperHandler {
@@ -78,7 +79,7 @@ pub struct WhisperHandler {
 }
 
 impl WhisperHandler {
-    pub(crate) fn new(config: WhisperParams) -> Result<Self, Error> {
+    pub(crate) fn new(config: WhisperConfig) -> Result<Self, Error> {
         let (stop_handle, mut stop_signal) = oneshot::channel();
         let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<u8>>(128);
         let (transcription_tx, _) = broadcast::channel::<Vec<Segment>>(128);
@@ -121,10 +122,11 @@ impl WhisperHandler {
 
                 if tracing::enabled!(tracing::Level::TRACE) {
                     for segment in segments.iter() {
-                        tracing::trace!("[{}] SEGMENT: {}", detector.n_iter, segment.text);
+                        tracing::trace!("[{}-{}]s SEGMENT: {}",
+                            segment.start_timestamp as f32 / 1000.0,
+                            segment.end_timestamp as f32 / 1000.0,
+                            segment.text);
                     }
-                } else if tracing::enabled!(tracing::Level::DEBUG) {
-                    tracing::debug!("[{}] SEGMENT: {}", detector.n_iter, segments[0].text);
                 }
 
                 if let Err(e) = shared_transcription_tx.send(segments) {
@@ -151,107 +153,114 @@ impl WhisperHandler {
 
 struct Detector {
     state: WhisperState<'static>,
-    config: &'static WhisperParams,
+    config: &'static WhisperConfig,
     n_samples_keep: usize,
     n_samples_step: usize,
     n_samples_len: usize,
-    n_new_line: usize,
-    n_iter: usize,
     prompt_tokens: Vec<c_int>,
     pcm_f32: VecDeque<f32>,
     offset: usize,
+    stable_offset: usize,
 }
 
 impl Detector {
     fn new(state: WhisperState<'static>,
-           config: &'static WhisperParams) -> Self {
+           config: &'static WhisperConfig) -> Self {
         Detector {
             state,
             config,
             n_samples_keep: (config.keep_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
             n_samples_step: (config.step_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
             n_samples_len: (config.length_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
-            n_new_line: 1.max(config.length_ms / config.step_ms - 1) as usize,
-            n_iter: 0,
             prompt_tokens: Default::default(),
             pcm_f32: VecDeque::from(vec![0f32; 30 * WHISPER_SAMPLE_RATE as usize]),
             offset: 0,
+            stable_offset: 0
         }
     }
 
     fn feed(&mut self, new_pcm_f32: Vec<f32>) {
         self.pcm_f32.extend(new_pcm_f32);
-        if self.pcm_f32.len() > self.n_samples_len + self.n_samples_keep {
-            let _ = self.pcm_f32.drain(0..(self.pcm_f32.len() - self.n_samples_keep - self.n_samples_len)).len();
+        if self.pcm_f32.len() < self.n_samples_len {
+            return
         }
+        let len_to_drain = self.pcm_f32.drain(0..(self.pcm_f32.len() - self.n_samples_len)).len();
+        self.offset += len_to_drain;
     }
 
     fn inference(&mut self) -> Result<Vec<Segment>, Error> {
-        let params = self.config.to_full_params(self.prompt_tokens.as_slice());
+        let params = self.config.params.to_full_params(self.prompt_tokens.as_slice());
         let start = std::time::Instant::now();
         let _ = self.state.full(params, self.pcm_f32.make_contiguous())
             .map_err(|e| Error::whisper_error("failed to initialize WhisperState", e))?;
         let end = std::time::Instant::now();
         if end - start > Duration::from_millis(self.config.step_ms as u64) {
-            tracing::warn!("full() took {} ms too slow", (end - start).as_millis());
+            tracing::warn!("full([{}]) took {} ms too slow", self.pcm_f32.len(), (end - start).as_millis());
         }
 
+        let timestamp_offset: i64 = (self.offset * 1000 / WHISPER_SAMPLE_RATE as usize) as i64;
+        let stable_offset: i64 = (self.stable_offset * 1000 / WHISPER_SAMPLE_RATE as usize) as i64;
         let num_segments = self.state
             .full_n_segments()
             .map_err(|e| Error::whisper_error("failed to get number of segments", e))?;
         let mut segments: Vec<Segment> = Vec::with_capacity(num_segments as usize);
         for i in 0..num_segments {
-            let segment = self.state
-                .full_get_segment_text(i)
-                .map_err(|e| Error::whisper_error("failed to get segment", e))?;
-            let timestamp_offset: i64 = (self.offset * 1000 / WHISPER_SAMPLE_RATE as usize) as i64;
-            let start_timestamp: i64 = timestamp_offset + 10 * self.state
-                .full_get_segment_t0(i)
-                .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
             let end_timestamp: i64 = timestamp_offset + 10 * self.state
                 .full_get_segment_t1(i)
                 .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
-            // tracing::trace!("{}", segment);
-            segments.push(Segment { start_timestamp, end_timestamp, text: segment });
+            if end_timestamp <= stable_offset {
+                continue
+            }
+
+            let start_timestamp: i64 = timestamp_offset + 10 * self.state
+                .full_get_segment_t0(i)
+                .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
+            let segment = self.state
+                .full_get_segment_text(i)
+                .map_err(|e| Error::whisper_error("failed to get segment", e))?;
+            let num_tokens = self.state
+                .full_n_tokens(i)
+                .map_err(|e| Error::whisper_error("failed to get segment tokens", e))?;
+            let mut segment_tokens = Vec::with_capacity(num_tokens as usize);
+            for j in 0..num_tokens {
+                segment_tokens.push(
+                    self.state
+                        .full_get_token_id(i, j)
+                        .map_err(|e| Error::whisper_error("failed to get token", e))?
+                );
+            }
+
+            segments.push(Segment { start_timestamp, end_timestamp, text: segment.trim().to_string(), tokens: segment_tokens });
         }
 
+        let Some((_last, init)) = segments.split_last() else {
+            return Ok(Vec::default())
+        };
 
-        self.n_iter = self.n_iter + 1;
+        let Some((last_2_seg, _)) = init.split_last() else {
+            return Ok(Vec::default())
+        };
 
-        if self.n_iter % self.n_new_line == 0 {
-            self.next_line()?;
-            Ok(segments)
-        } else {
-            Ok(vec![])
-        }
+        let offset = (last_2_seg.end_timestamp - timestamp_offset) as usize / 1000 * WHISPER_SAMPLE_RATE as usize;
+        self.stable_offset = offset;
+        self.drop_stable_by_segments(init);
+        Ok(init.into())
     }
 
-    fn next_line(&mut self) -> Result<(), Error> {
+    fn drop_stable_by_segments(&mut self, stable_segments: &[Segment]) {
+        let Some(last) = stable_segments.last() else {
+            return
+        };
+        let drop_offset: usize = (last.end_timestamp as usize / 1000 * WHISPER_SAMPLE_RATE as usize - self.offset) as usize;
+        let len_to_drain = self.pcm_f32.drain(0..drop_offset).len();
+        self.offset += len_to_drain;
 
-        // keep the last n_samples_keep samples from pcm_f32
-        if self.pcm_f32.len() > self.n_samples_keep {
-            let _ = self.pcm_f32.drain(0..(self.pcm_f32.len() - self.n_samples_keep)).len();
+        for segment in stable_segments.into_iter() {
+            self.prompt_tokens.extend(&segment.tokens);
         }
-
-        if !self.config.no_context {
-            self.prompt_tokens.clear();
-
-            let num_segments = self.state
-                .full_n_segments()
-                .map_err(|e| Error::whisper_error("failed to get number of segments", e))?;
-            for i in 0..num_segments {
-                let token_count = self.state
-                    .full_n_tokens(i)
-                    .map_err(|e| Error::whisper_error("failed to get number of tokens", e))?;
-                for j in 0..token_count {
-                    let token = self.state
-                        .full_get_token_id(i, j)
-                        .map_err(|e| Error::whisper_error("failed to get token", e))?;
-                    self.prompt_tokens.push(token);
-                }
-            }
+        if self.prompt_tokens.len() > self.config.max_prompt_tokens {
+            let _ = self.prompt_tokens.drain(0..(self.prompt_tokens.len() - self.config.max_prompt_tokens)).len();
         }
-        Ok(())
     }
 }
 

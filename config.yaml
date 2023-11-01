@@ -2,20 +2,24 @@ server:
     port: 8080
     host: ::1
 whisper:
-#    n_threads: 4
-    length_ms: 5000
+    length_ms: 10000
     keep_ms: 200
     step_ms: 5000
-    max_tokens: 0
-    audio_ctx: 0
-    vad_thold: 0.6
-    freq_thold: 100.0
-    speed_up: false
-    translate: false
-    no_fallback: false
-    print_special: false
-    no_context: false
-    no_timestamps: false
-    tinydiarize: false
-    language: "en"
     model: "models/ggml-base.bin"
+    max_prompt_tokens: 128
+    params:
+        #n_threads: 4
+        max_tokens: 0
+        audio_ctx: 0
+        speed_up: false
+        single_segment: false
+        translate: false
+        no_fallback: false
+        temperature_inc: -1.0
+        print_special: false
+        print_progress: false
+        print_realtime: false
+        no_context: false
+        no_timestamps: false
+        tinydiarize: false
+        language: "en"
