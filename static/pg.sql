@@ -22,7 +22,7 @@ CREATE TABLE member (
     nickname        VARCHAR(512) NOT NULL,
     language        VARCHAR(32) NOT NULL,
     create_time     TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
-)
+);
 
 DROP TABLE digital_human;
 CREATE TABLE digital_human (
