@@ -92,16 +92,18 @@ async fn main() -> Result<(), std::io::Error> {
 pub struct LessonSpeakerQuery {
     id: u32,
     lang: String,
+    prompt: Option<String>,
 }
 
 #[handler]
 async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, ws: WebSocket) -> impl IntoResponse {
     let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone().parse().expect("Not supported lang")).await;
+    let prompt = query.prompt.clone().unwrap_or_default();
 
     ws.on_upgrade(|mut socket| async move {
         let origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        let whisper = WhisperHandler::new(CONFIG.whisper.clone()).expect("failed to create whisper");
+        let whisper = WhisperHandler::new(CONFIG.whisper.clone(), prompt).expect("failed to create whisper");
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {

@@ -5,9 +5,9 @@ use std::thread::sleep;
 use std::time::Duration;
 use lazy_static::lazy_static;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use whisper_rs::{convert_integer_to_float_audio, WhisperState, WhisperContext};
+use whisper_rs::{convert_integer_to_float_audio, WhisperState, WhisperContext, WhisperToken};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
-use crate::config::{WhisperParams, CONFIG, WhisperConfig};
+use crate::config::{CONFIG, WhisperConfig};
 use crate::group::GroupedWithin;
 
 lazy_static! {
@@ -79,15 +79,18 @@ pub struct WhisperHandler {
 }
 
 impl WhisperHandler {
-    pub(crate) fn new(config: WhisperConfig) -> Result<Self, Error> {
+    pub(crate) fn new(config: WhisperConfig, prompt: String) -> Result<Self, Error> {
         let (stop_handle, mut stop_signal) = oneshot::channel();
         let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<u8>>(128);
         let (transcription_tx, _) = broadcast::channel::<Vec<Segment>>(128);
         let shared_transcription_tx = transcription_tx.clone();
         let state = WHISPER_CONTEXT.create_state()
             .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
+        let preset_prompt_tokens = WHISPER_CONTEXT
+            .tokenize(prompt.as_str(), CONFIG.whisper.max_prompt_tokens)
+            .map_err(|e| Error::whisper_error("failed to tokenize prompt", e))?;
         tokio::task::spawn_blocking(move || {
-            let mut detector = Detector::new(state, &CONFIG.whisper);
+            let mut detector = Detector::new(state, &CONFIG.whisper, preset_prompt_tokens);
             let mut grouped = GroupedWithin::new(
                 detector.n_samples_step * 2,
                 Duration::from_millis(config.step_ms as u64),
@@ -154,6 +157,7 @@ impl WhisperHandler {
 struct Detector {
     state: WhisperState<'static>,
     config: &'static WhisperConfig,
+    preset_prompt_tokens: Vec<WhisperToken>,
     n_samples_keep: usize,
     n_samples_step: usize,
     n_samples_len: usize,
@@ -165,10 +169,13 @@ struct Detector {
 
 impl Detector {
     fn new(state: WhisperState<'static>,
-           config: &'static WhisperConfig) -> Self {
+           config: &'static WhisperConfig,
+           preset_prompt_tokens: Vec<WhisperToken>) -> Self {
+
         Detector {
             state,
             config,
+            preset_prompt_tokens,
             n_samples_keep: (config.keep_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
             n_samples_step: (config.step_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
             n_samples_len: (config.length_ms * WHISPER_SAMPLE_RATE / 1000) as usize,
@@ -189,7 +196,8 @@ impl Detector {
     }
 
     fn inference(&mut self) -> Result<Vec<Segment>, Error> {
-        let params = self.config.params.to_full_params(self.prompt_tokens.as_slice());
+        let prompt_tokens = [self.preset_prompt_tokens.as_slice(), self.prompt_tokens.as_slice()].concat();
+        let params = self.config.params.to_full_params(prompt_tokens.as_slice());
         let start = std::time::Instant::now();
         let _ = self.state.full(params, self.pcm_f32.make_contiguous())
             .map_err(|e| Error::whisper_error("failed to initialize WhisperState", e))?;
