@@ -28,6 +28,7 @@ Open http://localhost:8080 in the browser
 ## Architecture
 
 ![Completed Architecture](./docs/HR%20Training-Completed.drawio.svg)
+
 Polyhedron uses a broadcast model to share transcription, translation, and speech synthesis work between clients.
 
 - A single transcription is generated for the speaker and shared with all language clients.
@@ -49,6 +50,7 @@ By sharing the intermediate outputs, the system avoids duplicating work across c
 The components communicate using WebSockets and channels to distribute the shared outputs.
 
 ![Simply Architecture](./docs/HR%20Training-Simple.drawio.svg)
+
 The system architecture with a single listener can be summarized as:
 
 - Speaker voice input ->
