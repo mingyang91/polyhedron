@@ -7,12 +7,12 @@ The app allows a trainer to conduct lessons in their native language, while trai
 
 ## Key features:
 
-Real-time voice transcription of the trainer's speech using Amazon Transcribe
-Translates speech into the trainee's language using Amazon Translate
-Displays translated text to trainees in real-time
-Allows trainer to see transcription and repeat unclear sections
-Facilitates training in multilingual organizations
-Polyhedron uses WebSockets to stream audio and text between clients. The frontend is built with React and Vite.
+- Real-time voice transcription of the trainer's speech using Amazon Transcribe
+- Translates speech into the trainee's language using Amazon Translate
+- Displays translated text to trainees in real-time
+- Allows trainer to see transcription and repeat unclear sections
+- Facilitates training in multilingual organizations
+- Polyhedron uses WebSockets to stream audio and text between clients. The frontend is built with React and Vite.
 
 The backend is developed in Rust using the Poem web framework with WebSockets support. It interfaces with AWS services for transcription, translation and text-to-speech.
 
