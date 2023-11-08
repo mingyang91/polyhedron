@@ -12,7 +12,7 @@ aws-sdk-translate = "0.34"
 aws-sdk-polly = "0.34"
 config = "0.13"
 futures-util = "0.3"
-lazy_static = "1.4"
+once_cell = "1.18"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

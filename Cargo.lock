@@ -1449,7 +1449,7 @@ dependencies = [
  "aws-sdk-translate",
  "config",
  "futures-util",
- "lazy_static",
+ "once_cell",
  "poem",
  "serde",
  "serde_json",

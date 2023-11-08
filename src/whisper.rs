@@ -1,19 +1,23 @@
-use crate::config::{WhisperConfig, CONFIG};
-use crate::group::GroupedWithin;
-use lazy_static::lazy_static;
-use std::collections::VecDeque;
-use std::ffi::c_int;
-use std::fmt::{Debug, Display, Formatter};
-use std::thread::sleep;
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    ffi::c_int,
+    fmt::{Debug, Display, Formatter},
+    thread::sleep,
+    time::Duration,
+};
+
+use once_cell::sync::Lazy;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperState, WhisperToken};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 
-lazy_static! {
-    static ref WHISPER_CONTEXT: WhisperContext =
-         WhisperContext::new(&*CONFIG.whisper.model).expect("failed to create WhisperContext");
-}
+use crate::config::{Settings, SETTINGS};
+use crate::{config::WhisperConfig, group::GroupedWithin};
+
+static WHISPER_CONTEXT: Lazy<WhisperContext> = Lazy::new(|| {
+    let settings = Settings::new().expect("Failed to initialize settings.");
+    WhisperContext::new(&settings.whisper.model).expect("failed to create WhisperContext")
+});
 
 #[derive(Debug)]
 pub(crate) enum Error {
@@ -86,10 +90,10 @@ impl WhisperHandler {
             .create_state()
             .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
         let preset_prompt_tokens = WHISPER_CONTEXT
-            .tokenize(prompt.as_str(), CONFIG.whisper.max_prompt_tokens)
+            .tokenize(prompt.as_str(), SETTINGS.whisper.max_prompt_tokens)
             .map_err(|e| Error::whisper_error("failed to tokenize prompt", e))?;
         tokio::task::spawn_blocking(move || {
-            let mut detector = Detector::new(state, &CONFIG.whisper, preset_prompt_tokens);
+            let mut detector = Detector::new(state, &SETTINGS.whisper, preset_prompt_tokens);
             let mut grouped = GroupedWithin::new(
                 detector.n_samples_step * 2,
                 Duration::from_millis(config.step_ms as u64),
@@ -203,7 +207,7 @@ impl Detector {
             self.preset_prompt_tokens.as_slice(),
             self.prompt_tokens.as_slice(),
         ]
-            .concat();
+        .concat();
         let params = self.config.params.to_full_params(prompt_tokens.as_slice());
         let start = std::time::Instant::now();
         let _ = self
@@ -229,18 +233,18 @@ impl Detector {
         for i in 0..num_segments {
             let end_timestamp: i64 = timestamp_offset
                 + 10 * self
-                .state
-                .full_get_segment_t1(i)
-                .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
+                    .state
+                    .full_get_segment_t1(i)
+                    .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
             if end_timestamp <= stable_offset {
                 continue;
             }
 
             let start_timestamp: i64 = timestamp_offset
                 + 10 * self
-                .state
-                .full_get_segment_t0(i)
-                .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
+                    .state
+                    .full_get_segment_t0(i)
+                    .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
             let segment = self
                 .state
                 .full_get_segment_text(i)
@@ -285,12 +289,12 @@ impl Detector {
         let Some(last) = stable_segments.last() else {
             return;
         };
-        let drop_offset: usize = (last.end_timestamp as usize / 1000 * WHISPER_SAMPLE_RATE as usize
-            - self.offset) as usize;
+        let drop_offset: usize =
+            last.end_timestamp as usize / 1000 * WHISPER_SAMPLE_RATE as usize - self.offset;
         let len_to_drain = self.pcm_f32.drain(0..drop_offset).len();
         self.offset += len_to_drain;
 
-        for segment in stable_segments.into_iter() {
+        for segment in stable_segments.iter() {
             self.prompt_tokens.extend(&segment.tokens);
         }
         if self.prompt_tokens.len() > self.config.max_prompt_tokens {
@@ -307,7 +311,7 @@ impl Drop for WhisperHandler {
         let Some(stop_handle) = self.stop_handle.take() else {
             return tracing::warn!("WhisperHandler::drop() called without stop_handle");
         };
-        if let Err(_) = stop_handle.send(()) {
+        if stop_handle.send(()).is_err() {
             tracing::warn!("WhisperHandler::drop() failed to send stop signal");
         }
     }

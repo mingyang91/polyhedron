@@ -5,20 +5,22 @@
 
 #![allow(clippy::result_large_err)]
 
-use aws_sdk_transcribestreaming::{meta::PKG_VERSION};
-use futures_util::stream::StreamExt;
-use futures_util::SinkExt;
-use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
-use poem::web::websocket::{Message, WebSocket};
-use poem::web::{Data, Query};
-use poem::{get, handler, listener::TcpListener, EndpointExt, IntoResponse, Route, Server};
-
-use crate::config::CONFIG;
-use crate::lesson::Viseme;
-use crate::whisper::WhisperHandler;
-use lesson::LessonsManager;
+use aws_sdk_transcribestreaming::meta::PKG_VERSION;
+use futures_util::{stream::StreamExt, SinkExt};
+use poem::{
+    endpoint::{StaticFileEndpoint, StaticFilesEndpoint},
+    get, handler,
+    listener::TcpListener,
+    web::{
+        websocket::{Message, WebSocket},
+        Data, Query,
+    },
+    EndpointExt, IntoResponse, Route, Server,
+};
 use serde::{Deserialize, Serialize};
 use tokio::select;
+
+use crate::{config::*, lesson::*, whisper::*};
 
 mod config;
 mod group;
@@ -61,7 +63,7 @@ async fn main() -> Result<(), std::io::Error> {
             StaticFileEndpoint::new("./static/index.html"),
         )
         .data(ctx);
-    let addr = format!("{}:{}", CONFIG.server.host, CONFIG.server.port);
+    let addr = format!("{}:{}", SETTINGS.server.host, SETTINGS.server.port);
     let listener = TcpListener::bind(addr);
     let server = Server::new(listener);
 
@@ -94,7 +96,7 @@ async fn stream_speaker(
         let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
         let whisper =
-            WhisperHandler::new(CONFIG.whisper.clone(), prompt).expect("failed to create whisper");
+            WhisperHandler::new(SETTINGS.whisper.clone(), prompt).expect("failed to create whisper");
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {

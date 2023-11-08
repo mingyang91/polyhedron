@@ -35,7 +35,7 @@ where
                             return Some(will_send);
                         }
                     }
-                    return None;
+                    None
                 };
 
                 let grouped: Vec<I> = select! {

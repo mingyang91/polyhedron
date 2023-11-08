@@ -29,9 +29,9 @@ pub struct LessonsManager {
 
 impl LessonsManager {
     pub(crate) fn new(sdk_config: &SdkConfig) -> Self {
-        let transcript_client = aws_sdk_transcribestreaming::Client::new(&sdk_config);
-        let translate_client = aws_sdk_translate::Client::new(&sdk_config);
-        let polly_client = aws_sdk_polly::Client::new(&sdk_config);
+        let transcript_client = aws_sdk_transcribestreaming::Client::new(sdk_config);
+        let translate_client = aws_sdk_translate::Client::new(sdk_config);
+        let polly_client = aws_sdk_polly::Client::new(sdk_config);
         LessonsManager {
             translate_client,
             polly_client,

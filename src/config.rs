@@ -1,26 +1,12 @@
-use std::{ffi::c_int, net::IpAddr, env};
+use std::{env, ffi::c_int, net::IpAddr};
 
-use config::{Environment, Config, File};
-use lazy_static::lazy_static;
+use config::{Config, Environment, File};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use whisper_rs::FullParams;
 
-#[derive(Debug)]
-pub enum Error {
-    IoError(std::io::Error),
-    ConfigError(serde_yaml::Error),
-}
-
-pub(crate) fn load_config() -> Result<Settings, Error> {
-    let config_str = std::fs::read_to_string("../config/dev.yaml").map_err(|e| Error::IoError(e))?;
-    let config: Settings =
-        serde_yaml::from_str(config_str.as_str()).map_err(|e| Error::ConfigError(e))?;
-    return Ok(config);
-}
-
-lazy_static! {
-    pub static ref CONFIG: Settings = load_config().expect("failed to load config");
-}
+pub(crate) static SETTINGS: Lazy<Settings> =
+    Lazy::new(|| Settings::new().expect("Failed to initialize settings"));
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct WhisperConfig {
@@ -62,7 +48,7 @@ impl WhisperParams {
         param.set_translate(self.translate);
         param.set_single_segment(false);
         param.set_max_tokens(self.max_tokens as i32);
-        let lang = self.language.as_ref().map(|s| s.as_str());
+        let lang = self.language.as_deref();
         param.set_language(lang);
         let num_cpus = std::thread::available_parallelism()
             .map(|c| c.get())
