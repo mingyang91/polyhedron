@@ -1,21 +1,27 @@
 use std::collections::VecDeque;
 use std::time::Duration;
-use tokio::{select};
-use tokio::time::sleep;
-use tokio::sync::mpsc::{Receiver, channel};
+use tokio::select;
 use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::{channel, Receiver};
+use tokio::time::sleep;
 
 pub struct GroupedWithin<I>
-where I: 'static + Send {
-    outlet: Receiver<Vec<I>>
+where
+    I: 'static + Send,
+{
+    outlet: Receiver<Vec<I>>,
 }
 
 impl<I> GroupedWithin<I>
-where I: 'static + Send {
-    pub fn new(group_size: usize,
-               window_time: Duration,
-               mut inlet: Receiver<Vec<I>>,
-               buffer: usize) -> Self {
+where
+    I: 'static + Send,
+{
+    pub fn new(
+        group_size: usize,
+        window_time: Duration,
+        mut inlet: Receiver<Vec<I>>,
+        buffer: usize,
+    ) -> Self {
         let (tx, outlet) = channel::<Vec<I>>(buffer);
         tokio::spawn(async move {
             let mut window = VecDeque::with_capacity(group_size);
@@ -26,10 +32,10 @@ where I: 'static + Send {
                         window.extend(c);
                         if window.len() >= group_size {
                             let will_send: Vec<I> = window.drain(0..group_size).collect();
-                            return Some(will_send)
+                            return Some(will_send);
                         }
                     }
-                    return None
+                    return None;
                 };
 
                 let grouped: Vec<I> = select! {
@@ -45,7 +51,7 @@ where I: 'static + Send {
                 };
 
                 if grouped.is_empty() {
-                    continue
+                    continue;
                 }
 
                 if let Err(e) = tx.send(grouped).await {
@@ -53,9 +59,7 @@ where I: 'static + Send {
                 }
             }
         });
-        Self {
-            outlet
-        }
+        Self { outlet }
     }
 
     pub fn next(&mut self) -> Result<Vec<I>, TryRecvError> {

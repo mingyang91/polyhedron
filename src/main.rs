@@ -5,30 +5,29 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::default::Default;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
 use clap::Parser;
+use std::default::Default;
 
-use poem::{EndpointExt, get, handler, IntoResponse, listener::TcpListener, Route, Server};
-use futures_util::{SinkExt};
+use futures_util::stream::StreamExt;
+use futures_util::SinkExt;
 use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
 use poem::web::websocket::{Message, WebSocket};
-use futures_util::stream::StreamExt;
 use poem::web::{Data, Query};
+use poem::{get, handler, listener::TcpListener, EndpointExt, IntoResponse, Route, Server};
 
-use tokio::{select};
-use serde::{Deserialize, Serialize};
-use lesson::{LessonsManager};
 use crate::config::CONFIG;
 use crate::lesson::Viseme;
 use crate::whisper::WhisperHandler;
+use lesson::LessonsManager;
+use serde::{Deserialize, Serialize};
+use tokio::select;
 
-mod lesson;
 mod config;
-mod whisper;
 mod group;
-
+mod lesson;
+mod whisper;
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -42,14 +41,11 @@ struct Context {
     lessons_manager: LessonsManager,
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
 
-    let Opt {
-        region,
-    } = Opt::parse();
+    let Opt { region } = Opt::parse();
 
     let region_provider = RegionProviderChain::first_try(region.map(Region::new))
         .or_default_provider()
@@ -70,15 +66,21 @@ async fn main() -> Result<(), std::io::Error> {
 
     let app = Route::new()
         .nest(
-        "/",
-        StaticFilesEndpoint::new("./static")
-            .show_files_listing()
-            .index_file("index.html"),
+            "/",
+            StaticFilesEndpoint::new("./static")
+                .show_files_listing()
+                .index_file("index.html"),
         )
         .at("/ws/lesson-speaker", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
-        .at("lesson-speaker", StaticFileEndpoint::new("./static/index.html"))
-        .at("lesson-listener", StaticFileEndpoint::new("./static/index.html"))
+        .at(
+            "lesson-speaker",
+            StaticFileEndpoint::new("./static/index.html"),
+        )
+        .at(
+            "lesson-listener",
+            StaticFileEndpoint::new("./static/index.html"),
+        )
         .data(ctx);
     let addr = format!("{}:{}", CONFIG.server.host, CONFIG.server.port);
     let listener = TcpListener::bind(addr);
@@ -86,7 +88,6 @@ async fn main() -> Result<(), std::io::Error> {
 
     server.run(app).await
 }
-
 
 #[derive(Deserialize, Debug)]
 pub struct LessonSpeakerQuery {
@@ -96,14 +97,25 @@ pub struct LessonSpeakerQuery {
 }
 
 #[handler]
-async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, ws: WebSocket) -> impl IntoResponse {
-    let lesson = ctx.lessons_manager.create_lesson(query.id, query.lang.clone().parse().expect("Not supported lang")).await;
+async fn stream_speaker(
+    ctx: Data<&Context>,
+    query: Query<LessonSpeakerQuery>,
+    ws: WebSocket,
+) -> impl IntoResponse {
+    let lesson = ctx
+        .lessons_manager
+        .create_lesson(
+            query.id,
+            query.lang.clone().parse().expect("Not supported lang"),
+        )
+        .await;
     let prompt = query.prompt.clone().unwrap_or_default();
 
     ws.on_upgrade(|mut socket| async move {
         let origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        let whisper = WhisperHandler::new(CONFIG.whisper.clone(), prompt).expect("failed to create whisper");
+        let whisper =
+            WhisperHandler::new(CONFIG.whisper.clone(), prompt).expect("failed to create whisper");
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {
@@ -149,7 +161,6 @@ async fn stream_speaker(ctx: Data<&Context>, query: Query<LessonSpeakerQuery>, w
     })
 }
 
-
 #[derive(Deserialize, Debug)]
 pub struct LessonListenerQuery {
     id: u32,
@@ -162,11 +173,15 @@ pub struct LessonListenerQuery {
 enum LiveLessonTextEvent {
     Transcription { text: String },
     Translation { text: String },
-    LipSync{ visemes: Vec<Viseme> },
+    LipSync { visemes: Vec<Viseme> },
 }
 
 #[handler]
-async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>, ws: WebSocket) -> impl IntoResponse {
+async fn stream_listener(
+    ctx: Data<&Context>,
+    query: Query<LessonListenerQuery>,
+    ws: WebSocket,
+) -> impl IntoResponse {
     let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
     tracing::debug!("listener param = {:?}", query);
 
@@ -174,13 +189,17 @@ async fn stream_listener(ctx: Data<&Context>, query: Query<LessonListenerQuery>,
         let voice_id = match query.voice.parse() {
             Ok(id) => id,
             Err(e) => {
-                let _ = socket.send(Message::Text(format!("invalid voice id: {}", e))).await;
-                return
+                let _ = socket
+                    .send(Message::Text(format!("invalid voice id: {}", e)))
+                    .await;
+                return;
             }
         };
         let Some(lesson) = lesson_opt else {
-            let _ = socket.send(Message::Text("lesson not found".to_string())).await;
-            return
+            let _ = socket
+                .send(Message::Text("lesson not found".to_string()))
+                .await;
+            return;
         };
         let mut transcript_rx = lesson.transcript_channel();
         let mut lang_lesson = lesson.get_or_init(query.lang.clone()).await;

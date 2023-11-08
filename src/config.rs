@@ -1,7 +1,7 @@
+use lazy_static::lazy_static;
+use serde::Deserialize;
 use std::ffi::c_int;
 use std::net::IpAddr;
-use lazy_static::lazy_static;
-use serde::{Deserialize};
 use whisper_rs::FullParams;
 
 #[derive(Debug)]
@@ -12,9 +12,9 @@ pub enum Error {
 
 pub(crate) fn load_config() -> Result<Config, Error> {
     let config_str = std::fs::read_to_string("config.yaml").map_err(|e| Error::IoError(e))?;
-    let config: Config = serde_yaml::from_str(config_str.as_str())
-        .map_err(|e| Error::ConfigError(e))?;
-    return Ok(config)
+    let config: Config =
+        serde_yaml::from_str(config_str.as_str()).map_err(|e| Error::ConfigError(e))?;
+    return Ok(config);
 }
 
 lazy_static! {
@@ -49,7 +49,7 @@ pub(crate) struct WhisperParams {
     pub(crate) language: Option<String>,
 }
 
-const NONE: [c_int;0] = [];
+const NONE: [c_int; 0] = [];
 
 impl WhisperParams {
     pub(crate) fn to_full_params<'a, 'b>(&'a self, tokens: &'b [c_int]) -> FullParams<'a, 'b> {
@@ -63,7 +63,9 @@ impl WhisperParams {
         param.set_max_tokens(self.max_tokens as i32);
         let lang = self.language.as_ref().map(|s| s.as_str());
         param.set_language(lang);
-        let num_cpus = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+        let num_cpus = std::thread::available_parallelism()
+            .map(|c| c.get())
+            .unwrap_or(4);
         param.set_n_threads(self.n_threads.unwrap_or(num_cpus) as c_int);
         param.set_audio_ctx(self.audio_ctx as i32);
         param.set_speed_up(self.speed_up);
@@ -89,8 +91,11 @@ pub struct Config {
 mod tests {
     #[tokio::test]
     async fn load() {
-        let config_str = tokio::fs::read_to_string("config.yaml").await.expect("failed to read config file");
-        let params: crate::config::Config = serde_yaml::from_str(config_str.as_str()).expect("failed to parse config file");
+        let config_str = tokio::fs::read_to_string("config.yaml")
+            .await
+            .expect("failed to read config file");
+        let params: crate::config::Config =
+            serde_yaml::from_str(config_str.as_str()).expect("failed to parse config file");
         println!("{:?}", params);
     }
 }
