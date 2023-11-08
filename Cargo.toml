@@ -30,3 +30,9 @@ features = ["websocket", "static-files"]
 [target.aarch64-apple-darwin.dependencies.whisper-rs]
 version ="0.9.0-rc.2"
 features = ["coreml"]
+
+[target.x86_64-unknown-linux-gnu.dependencies.whisper-rs]
+features = ["cuda"]
+
+[target.aarch64-unknown-linux-gnu.dependencies.whisper-rs]
+features = ["cuda"]

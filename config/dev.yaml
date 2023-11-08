@@ -5,7 +5,7 @@ whisper:
     length_ms: 10000
     keep_ms: 200
     step_ms: 5000
-    model: "models/ggml-medium.en.bin" #"models/ggml-base.bin"
+    model: "models/ggml-large-q5_0.bin" #"models/ggml-base.bin"
     max_prompt_tokens: 128
     params:
         #n_threads: 4
