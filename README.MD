@@ -21,10 +21,9 @@ Configuration like AWS credentials and models are specified in config.yaml.
 ## Getting Started
 To run Polyhedron locally:
 
-Clone the repository
-Run `cargo run`
-
-Open http://localhost:8080 in the browser
+1. Config AWS account via https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
+2. Clone the repository, Run `cargo run --release`
+3. Open http://localhost:8080 in the browser
 ## Architecture
 
 ![Completed Architecture](./docs/HR%20Training-Completed.drawio.svg)

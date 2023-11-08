@@ -12,7 +12,7 @@ use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 
 lazy_static! {
     static ref WHISPER_CONTEXT: WhisperContext =
-        { WhisperContext::new(&*CONFIG.whisper.model).expect("failed to create WhisperContext") };
+         WhisperContext::new(&*CONFIG.whisper.model).expect("failed to create WhisperContext");
 }
 
 #[derive(Debug)]
@@ -203,7 +203,7 @@ impl Detector {
             self.preset_prompt_tokens.as_slice(),
             self.prompt_tokens.as_slice(),
         ]
-        .concat();
+            .concat();
         let params = self.config.params.to_full_params(prompt_tokens.as_slice());
         let start = std::time::Instant::now();
         let _ = self
@@ -229,18 +229,18 @@ impl Detector {
         for i in 0..num_segments {
             let end_timestamp: i64 = timestamp_offset
                 + 10 * self
-                    .state
-                    .full_get_segment_t1(i)
-                    .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
+                .state
+                .full_get_segment_t1(i)
+                .map_err(|e| Error::whisper_error("failed to get end timestamp", e))?;
             if end_timestamp <= stable_offset {
                 continue;
             }
 
             let start_timestamp: i64 = timestamp_offset
                 + 10 * self
-                    .state
-                    .full_get_segment_t0(i)
-                    .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
+                .state
+                .full_get_segment_t0(i)
+                .map_err(|e| Error::whisper_error("failed to get start timestamp", e))?;
             let segment = self
                 .state
                 .full_get_segment_text(i)

@@ -52,7 +52,7 @@ pub(crate) struct WhisperParams {
 const NONE: [c_int; 0] = [];
 
 impl WhisperParams {
-    pub(crate) fn to_full_params<'a, 'b>(&'a self, tokens: &'b [c_int]) -> FullParams<'a, 'b> {
+    pub(crate) fn to_full_params<'a, 'b>(&'a self, _tokens: &'b [c_int]) -> FullParams<'a, 'b> {
         let mut param = FullParams::new(Default::default());
         param.set_print_progress(self.print_progress);
         param.set_print_special(self.print_special);

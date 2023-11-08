@@ -5,11 +5,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_transcribestreaming::{config::Region, meta::PKG_VERSION};
-use clap::Parser;
-use std::default::Default;
-
+use aws_sdk_transcribestreaming::{meta::PKG_VERSION};
 use futures_util::stream::StreamExt;
 use futures_util::SinkExt;
 use poem::endpoint::{StaticFileEndpoint, StaticFilesEndpoint};
@@ -29,13 +25,6 @@ mod group;
 mod lesson;
 mod whisper;
 
-#[derive(Debug, Parser)]
-struct Opt {
-    /// The AWS Region.
-    #[structopt(short, long)]
-    region: Option<String>,
-}
-
 #[derive(Clone)]
 struct Context {
     lessons_manager: LessonsManager,
@@ -45,21 +34,11 @@ struct Context {
 async fn main() -> Result<(), std::io::Error> {
     tracing_subscriber::fmt::init();
 
-    let Opt { region } = Opt::parse();
-
-    let region_provider = RegionProviderChain::first_try(region.map(Region::new))
-        .or_default_provider()
-        .or_else(Region::new("us-west-2"));
-
     if tracing::enabled!(tracing::Level::DEBUG) {
         tracing::debug!("Transcribe client version: {}", PKG_VERSION);
-        tracing::debug!(
-            "Region:                    {}",
-            region_provider.region().await.unwrap().as_ref()
-        );
     }
 
-    let shared_config = aws_config::from_env().region(region_provider).load().await;
+    let shared_config = aws_config::load_from_env().await;
     let ctx = Context {
         lessons_manager: LessonsManager::new(&shared_config),
     };
@@ -112,7 +91,7 @@ async fn stream_speaker(
     let prompt = query.prompt.clone().unwrap_or_default();
 
     ws.on_upgrade(|mut socket| async move {
-        let origin_tx = lesson.voice_channel();
+        let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
         let whisper =
             WhisperHandler::new(CONFIG.whisper.clone(), prompt).expect("failed to create whisper");
