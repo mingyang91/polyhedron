@@ -447,8 +447,7 @@ async fn synthesize_speech(
         .to_vec();
     let parsed: Vec<Viseme> = visemes
         .lines()
-        .filter_map(|line| line.ok())
-        .filter_map(|line| serde_json::from_str::<Viseme>(&line).ok())
+        .flat_map(|line| Ok::<Viseme, anyhow::Error>(serde_json::from_str::<Viseme>(&line?)?))
         .collect();
     Ok((parsed, audio.audio_stream))
 }

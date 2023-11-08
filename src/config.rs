@@ -18,6 +18,7 @@ pub(crate) struct WhisperConfig {
     pub(crate) max_prompt_tokens: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct WhisperParams {
     pub(crate) n_threads: Option<usize>,
@@ -36,7 +37,7 @@ pub(crate) struct WhisperParams {
     pub(crate) language: Option<String>,
 }
 
-const NONE: [c_int; 0] = [];
+const _NONE: [c_int; 0] = [];
 
 impl WhisperParams {
     pub(crate) fn to_full_params<'a, 'b>(&'a self, _tokens: &'b [c_int]) -> FullParams<'a, 'b> {

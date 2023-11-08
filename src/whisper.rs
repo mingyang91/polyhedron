@@ -54,7 +54,7 @@ impl std::error::Error for Error {
     }
 }
 
-fn pcm_i16_to_f32(input: &Vec<u8>) -> Vec<f32> {
+fn pcm_i16_to_f32(input: &[u8]) -> Vec<f32> {
     let pcm_i16 = input
         .chunks_exact(2)
         .map(|chunk| {
@@ -157,6 +157,7 @@ impl WhisperHandler {
     }
 }
 
+#[allow(dead_code)]
 struct Detector {
     state: WhisperState<'static>,
     config: &'static WhisperConfig,
