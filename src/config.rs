@@ -1,7 +1,8 @@
+use std::{ffi::c_int, net::IpAddr, env};
+
+use config::{Environment, Config, File};
 use lazy_static::lazy_static;
 use serde::Deserialize;
-use std::ffi::c_int;
-use std::net::IpAddr;
 use whisper_rs::FullParams;
 
 #[derive(Debug)]
@@ -10,15 +11,15 @@ pub enum Error {
     ConfigError(serde_yaml::Error),
 }
 
-pub(crate) fn load_config() -> Result<Config, Error> {
-    let config_str = std::fs::read_to_string("config.yaml").map_err(|e| Error::IoError(e))?;
-    let config: Config =
+pub(crate) fn load_config() -> Result<Settings, Error> {
+    let config_str = std::fs::read_to_string("../config/dev.yaml").map_err(|e| Error::IoError(e))?;
+    let config: Settings =
         serde_yaml::from_str(config_str.as_str()).map_err(|e| Error::ConfigError(e))?;
     return Ok(config);
 }
 
 lazy_static! {
-    pub static ref CONFIG: Config = load_config().expect("failed to load config");
+    pub static ref CONFIG: Settings = load_config().expect("failed to load config");
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -83,19 +84,31 @@ pub(crate) struct Server {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Config {
+pub struct Settings {
     pub(crate) whisper: WhisperConfig,
     pub(crate) server: Server,
 }
 
+impl Settings {
+    pub(crate) fn new() -> Result<Self, anyhow::Error> {
+        let run_mode = env::var("APP_RUN_MODE").unwrap_or("dev".into());
+        let config = Config::builder()
+            .add_source(File::with_name(&format!("config/{run_mode}.yaml")).required(false))
+            .add_source(Environment::with_prefix("APP").separator("-"))
+            .build()
+            .map_err(anyhow::Error::from)?;
+
+        config.try_deserialize::<Self>().map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    #[tokio::test]
-    async fn load() {
-        let config_str = tokio::fs::read_to_string("config.yaml")
-            .await
-            .expect("failed to read config file");
-        let params: crate::config::Config =
-            serde_yaml::from_str(config_str.as_str()).expect("failed to parse config file");
-        println!("{:?}", params);
+    use super::*;
+
+    #[test]
+    fn load_dev_settings_should_success() {
+        let settings = Settings::new().unwrap();
+        println!("{:?}", settings);
     }
 }

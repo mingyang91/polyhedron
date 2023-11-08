@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0"
 async-stream = "0.3"
 aws-config = "0.56"
 aws-sdk-transcribestreaming = "0.34"
 aws-sdk-translate = "0.34"
 aws-sdk-polly = "0.34"
+config = "0.13"
 futures-util = "0.3"
 lazy_static = "1.4"
 serde = { version = "1.0", features = ["derive"] }
