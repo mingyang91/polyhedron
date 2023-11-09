@@ -1,0 +1,6 @@
+.idea/
+static/
+target/
+docker-compose.yaml
+Dockerfile
+README.MD

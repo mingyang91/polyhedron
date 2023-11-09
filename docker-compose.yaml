@@ -1,0 +1,16 @@
+version: "3"
+services:
+  polyhedron:
+    container_name: polyhedron
+    build: ./
+#    image: vitongue/polyhedron:latest
+    environment:
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - RUST_LOG=polyhedron=debug
+    volumes:
+      - ./config:/app/config
+      - ./static:/app/static
+    ports:
+      - "8080:8080"
