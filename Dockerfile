@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y ca-certificates python3-dev && rm -rf /
 COPY --from=builder /target/release/polyhedron /usr/local/bin/polyhedron
 COPY ./models/ggml-large-encoder.mlmodelc ./models/ggml-large-encoder.mlmodelc
 COPY ./models/ggml-large.bin ./models/ggml-large.bin
-COPY config.yaml config.yaml
+COPY ./config/dev.yaml ./config/dev.yaml
 COPY ./static ./static
 
 # Run the binary

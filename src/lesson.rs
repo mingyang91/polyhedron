@@ -8,7 +8,7 @@ use aws_sdk_transcribestreaming::types::{
     AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream,
 };
 use futures_util::future::try_join;
-use futures_util::{Stream, StreamExt, TryStreamExt};
+use futures_util::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -230,9 +230,7 @@ impl LangLesson {
                         .await;
                     match output {
                         Ok(res) => {
-                            if let Some(translated) = res.translated_text {
-                                let _ = shared_translated_tx.send(translated);
-                            }
+                            let _ = shared_translated_tx.send(res.translated_text);
                         }
                         Err(e) => {
                             return Err(e);
