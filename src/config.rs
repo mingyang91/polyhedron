@@ -4,6 +4,7 @@ use config::{Config, Environment, File};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use whisper_rs::FullParams;
+use tracing::debug;
 
 pub(crate) static SETTINGS: Lazy<Settings> =
     Lazy::new(|| Settings::new().expect("Failed to initialize settings"));
@@ -86,6 +87,10 @@ impl Settings {
             .map_err(anyhow::Error::from)?;
 
         config.try_deserialize::<Self>().map_err(Into::into)
+            .map(|settings| {
+                debug!("Settings: {settings:?}");
+                settings
+            })
     }
 }
 

@@ -19,6 +19,8 @@ use poem::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::select;
+use tracing::debug;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::{config::*, lesson::*, whisper::*};
 
@@ -34,11 +36,12 @@ struct Context {
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
 
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        tracing::debug!("Transcribe client version: {}", PKG_VERSION);
-    }
+    debug!("Transcribe client version: {}", PKG_VERSION);
 
     let shared_config = aws_config::load_from_env().await;
     let ctx = Context {
@@ -95,8 +98,8 @@ async fn stream_speaker(
     ws.on_upgrade(|mut socket| async move {
         let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        let whisper =
-            WhisperHandler::new(SETTINGS.whisper.clone(), prompt).expect("failed to create whisper");
+        let whisper = WhisperHandler::new(SETTINGS.whisper.clone(), prompt)
+            .expect("failed to create whisper");
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {

@@ -8,6 +8,7 @@ use std::{
 
 use once_cell::sync::Lazy;
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tracing::trace;
 use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperState, WhisperToken};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 
@@ -124,15 +125,13 @@ impl WhisperHandler {
                     }
                 };
 
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    for segment in segments.iter() {
-                        tracing::trace!(
-                            "[{}-{}]s SEGMENT: {}",
-                            segment.start_timestamp as f32 / 1000.0,
-                            segment.end_timestamp as f32 / 1000.0,
-                            segment.text
-                        );
-                    }
+                for segment in segments.iter() {
+                    trace!(
+                        "[{}-{}]s SEGMENT: {}",
+                        segment.start_timestamp as f32 / 1000.0,
+                        segment.end_timestamp as f32 / 1000.0,
+                        segment.text
+                    );
                 }
 
                 if let Err(e) = shared_transcription_tx.send(segments) {
