@@ -38,10 +38,8 @@ pub(crate) struct WhisperParams {
     pub(crate) language: Option<String>,
 }
 
-const _NONE: [c_int; 0] = [];
-
 impl WhisperParams {
-    pub(crate) fn to_full_params<'a, 'b>(&'a self, _tokens: &'b [c_int]) -> FullParams<'a, 'b> {
+    pub(crate) fn to_full_params<'a, 'b>(&'a self, tokens: &'b [c_int]) -> FullParams<'a, 'b> {
         let mut param = FullParams::new(Default::default());
         param.set_print_progress(self.print_progress);
         param.set_print_special(self.print_special);
@@ -60,6 +58,7 @@ impl WhisperParams {
         param.set_speed_up(self.speed_up);
         // param.set_tdrz_enable(self.tinydiarize);
         param.set_temperature_inc(self.temperature_inc);
+        param.set_tokens(tokens);
 
         param
     }
