@@ -8,7 +8,7 @@ use std::{
 
 use once_cell::sync::Lazy;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tracing::trace;
+use tracing::{debug, trace};
 use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperState, WhisperToken};
 use whisper_rs_sys::WHISPER_SAMPLE_RATE;
 
@@ -17,8 +17,23 @@ use crate::{config::WhisperConfig, group::GroupedWithin};
 
 static WHISPER_CONTEXT: Lazy<WhisperContext> = Lazy::new(|| {
     let settings = Settings::new().expect("Failed to initialize settings.");
+    if tracing::enabled!(tracing::Level::INFO) {
+        let info = print_system_info();
+        debug!("system_info: n_threads = {} / {} | {}\n",
+            settings.whisper.params.n_threads.unwrap_or(0),
+            std::thread::available_parallelism().map(|c| c.get()).unwrap_or(0),
+            info);
+    }
     WhisperContext::new(&settings.whisper.model).expect("failed to create WhisperContext")
 });
+
+fn print_system_info() -> String {
+    unsafe {
+        let raw_info = whisper_rs_sys::whisper_print_system_info();
+        let info = std::ffi::CStr::from_ptr(raw_info);
+        info.to_str().unwrap_or("failed to get system info").to_string()
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum Error {
