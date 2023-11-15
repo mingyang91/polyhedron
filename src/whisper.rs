@@ -17,7 +17,7 @@ use crate::{config::WhisperConfig, group::GroupedWithin};
 
 static WHISPER_CONTEXT: Lazy<WhisperContext> = Lazy::new(|| {
     let settings = Settings::new().expect("Failed to initialize settings.");
-    if tracing::enabled!(tracing::Level::INFO) {
+    if tracing::enabled!(tracing::Level::DEBUG) {
         let info = print_system_info();
         debug!("system_info: n_threads = {} / {} | {}\n",
             settings.whisper.params.n_threads.unwrap_or(0),
@@ -306,6 +306,9 @@ impl Detector {
         };
         let drop_offset: usize =
             last.end_timestamp as usize / 1000 * WHISPER_SAMPLE_RATE as usize - self.offset;
+        if drop_offset > self.pcm_f32.len() {
+            return; // Arithmetic overflow
+        }
         let len_to_drain = self.pcm_f32.drain(0..drop_offset).len();
         self.offset += len_to_drain;
 
