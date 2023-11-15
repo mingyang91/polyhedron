@@ -70,7 +70,13 @@ async fn main() -> Result<(), std::io::Error> {
     let listener = TcpListener::bind(addr);
     let server = Server::new(listener);
 
-    server.run(app).await
+    select! {
+        res = server.run(app) => res,
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("Shutting down");
+            Ok(())
+        },
+    }
 }
 
 #[derive(Deserialize, Debug)]
