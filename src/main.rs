@@ -104,7 +104,7 @@ async fn stream_speaker(
     ws.on_upgrade(|mut socket| async move {
         let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        let whisper = WhisperHandler::new(SETTINGS.whisper.clone(), prompt)
+        let mut whisper = WhisperHandler::new(SETTINGS.whisper.clone(), prompt)
             .expect("failed to create whisper");
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
@@ -118,7 +118,7 @@ async fn stream_speaker(
                 msg = socket.next() => {
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
-                            let _ = whisper.send(bin.to_vec()).await; // whisper test
+                            let _ = whisper.send_bytes(bin.to_vec()).await; // whisper test
                             // if let Err(e) = origin_tx.send(bin.to_vec()).await {
                             //     tracing::warn!("failed to send voice: {}", e);
                             //     break;
@@ -173,7 +173,7 @@ async fn stream_listener(
     ws: WebSocket,
 ) -> impl IntoResponse {
     let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
-    tracing::debug!("listener param = {:?}", query);
+    debug!("listener param = {:?}", query);
 
     ws.on_upgrade(|mut socket| async move {
         let voice_id = match query.voice.parse() {

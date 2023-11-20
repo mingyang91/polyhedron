@@ -2,24 +2,32 @@ server:
     port: 8080
     host: 0.0.0.0
 whisper:
-    length_ms: 10000
+    length_ms: 5000
     keep_ms: 200
     step_ms: 5000
-    model: "models/ggml-large-q5_0.bin" #"models/ggml-base.bin"
-    max_prompt_tokens: 128
+    model: "models/ggml-large-v3.bin"
+#    model: "models/ggml-base.bin"
+#    model: "models/ggml-medium.en.bin"
+    max_prompt_tokens: 32
+    context_confidence_threshold: 0.5
     params:
-        #n_threads: 4
-        max_tokens: 0
-        audio_ctx: 0
+#        n_threads: 8
+#        max_tokens: 0
+#        audio_ctx: 0
         speed_up: false
-        single_segment: false
+        single_segment: true
         translate: false
-        no_fallback: false
-        temperature_inc: -1.0
+#        temperature_inc: 0.2 #0.4
+#        temperature_inc: 0
+#        entropy_threshold: 2.5
+#        entropy_threshold: 2.8
+#        n_max_text_ctx: 64 #16384
         print_special: false
         print_progress: false
         print_realtime: false
+        token_timestamps: false
         no_context: false
         no_timestamps: false
+        suppress_non_speech_tokens: false
         tinydiarize: false
         language: "en"
