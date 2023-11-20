@@ -4,7 +4,7 @@ server:
 whisper:
     length_ms: 5000
     keep_ms: 200
-    step_ms: 5000
+    step_ms: 500
     model: "models/ggml-large-v3.bin"
 #    model: "models/ggml-base.bin"
 #    model: "models/ggml-medium.en.bin"
@@ -21,7 +21,7 @@ whisper:
 #        temperature_inc: 0
 #        entropy_threshold: 2.5
 #        entropy_threshold: 2.8
-#        n_max_text_ctx: 64 #16384
+        n_max_text_ctx: 0 #16384
         print_special: false
         print_progress: false
         print_realtime: false
