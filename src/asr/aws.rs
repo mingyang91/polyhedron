@@ -1,7 +1,8 @@
 use std::error::Error;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use async_stream::stream;
 use async_trait::async_trait;
+use aws_config::SdkConfig;
 use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
 use aws_sdk_transcribestreaming::primitives::Blob;
 use aws_sdk_transcribestreaming::types::{
@@ -14,17 +15,21 @@ use futures_util::TryStreamExt;
 use crate::asr::{ASR, Event};
 
 pub struct AWS_ASR {
-    client: aws_sdk_transcribestreaming::Client,
     speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<i16>>,
     speaker_transcript: tokio::sync::broadcast::Sender<Event>,
     drop_handler: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Debug for AWS_ASR {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AWS_ASR")
+    }
 }
 
 impl AWS_ASR {
     pub async fn from_env(lang: LanguageCode) -> anyhow::Result<Self> {
         let config = aws_config::load_from_env().await;
         let transcript_client = aws_sdk_transcribestreaming::Client::new(&config);
-        let client = transcript_client.clone();
 
         let (speaker_voice_channel, mut speaker_voice_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(128);
         let (speaker_transcript, _) = tokio::sync::broadcast::channel::<Event>(128);
@@ -70,7 +75,6 @@ impl AWS_ASR {
         });
 
         Ok(Self {
-            client,
             speaker_voice_channel,
             speaker_transcript,
             drop_handler: Some(drop_handler)
@@ -99,8 +103,8 @@ impl Drop for AWS_ASR {
 
 #[async_trait]
 impl ASR for AWS_ASR {
-    async fn frame(&mut self, frame: &[i16]) -> anyhow::Result<()> {
-        Ok(self.speaker_voice_channel.send(frame.to_vec()).await?)
+    async fn frame(&mut self, frame: Vec<i16>) -> anyhow::Result<()> {
+        Ok(self.speaker_voice_channel.send(frame).await?)
     }
 
     fn subscribe(&mut self) -> Receiver<Event> {
