@@ -25,8 +25,6 @@ use tracing::debug;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::{config::*, lesson::*};
-#[cfg(feature = "whisper")]
-use crate::whisper::*;
 
 mod config;
 mod lesson;
@@ -105,30 +103,17 @@ async fn stream_speaker(
     let prompt = query.prompt.clone().unwrap_or_default();
 
     ws.on_upgrade(|mut socket| async move {
-        let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        #[cfg(feature = "whisper")]
-        let mut whisper = asr::whisper::whisper_asr::CONTEXT.create_handler(&SETTINGS.whisper, prompt)
-            .expect("failed to create whisper");
-        #[cfg(feature = "whisper")]
-        let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {
-                // w = whisper_transcribe_rx.recv() => {
-                //     let Ok(_txt) = w else {
-                //         // TODO: handle msg
-                //         continue
-                //     };
-                // }
                 msg = socket.next() => {
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
-                            #[cfg(feature = "whisper")]
-                            let _ = whisper.send_bytes(bin.to_vec()).await; // whisper test
-                            // if let Err(e) = origin_tx.send(bin.to_vec()).await {
-                            //     tracing::warn!("failed to send voice: {}", e);
-                            //     break;
-                            // }
+                            let frame = u8_to_i16(bin);
+                            if let Err(e) = lesson.send(frame).await {
+                                tracing::warn!("failed to send voice: {}", e);
+                                break;
+                            }
                         },
                         Some(Ok(_)) => {
                             tracing::warn!("Other: {:?}", msg);
@@ -145,9 +130,9 @@ async fn stream_speaker(
                     }
                 },
                 output = transcribe_rx.recv() => {
-                    if let Ok(transcript) = output {
-                        tracing::trace!("Transcribed: {}", transcript);
-                        let evt = LiveLessonTextEvent::Transcription { text: transcript.clone() };
+                    if let Ok(evt) = output {
+                        tracing::trace!("Transcribed: {}", evt.transcript);
+                        let evt = LiveLessonTextEvent::Transcription { text: evt.transcript };
                         let json = serde_json::to_string(&evt).expect("failed to serialize");
                         let _ = socket.send(Message::Text(json)).await.expect("failed to send");
                     }
@@ -207,8 +192,8 @@ async fn stream_listener(
         loop {
             select! {
                 transcript = transcript_rx.recv() => {
-                    if let Ok(transcript) = transcript {
-                        let evt = LiveLessonTextEvent::Transcription { text: transcript };
+                    if let Ok(evt) = transcript {
+                        let evt = LiveLessonTextEvent::Transcription { text: evt.transcript };
                         match serde_json::to_string(&evt) {
                             Ok(json) => {
                                 tracing::debug!("Transcribed: {}", json);
@@ -249,4 +234,15 @@ async fn stream_listener(
             }
         }
     })
+}
+
+fn u8_to_i16(input: &[u8]) -> Vec<i16> {
+    input
+        .chunks_exact(2)
+        .map(|chunk| {
+            let mut buf = [0u8; 2];
+            buf.copy_from_slice(chunk);
+            i16::from_le_bytes(buf)
+        })
+        .collect::<Vec<i16>>()
 }

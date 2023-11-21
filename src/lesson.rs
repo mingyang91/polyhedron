@@ -1,41 +1,32 @@
-use async_stream::stream;
 use aws_config::SdkConfig;
 use aws_sdk_polly::primitives::ByteStream;
 use aws_sdk_polly::types::{Engine, OutputFormat, SpeechMarkType, VoiceId};
-use aws_sdk_transcribestreaming::operation::start_stream_transcription::StartStreamTranscriptionOutput;
-use aws_sdk_transcribestreaming::primitives::Blob;
-use aws_sdk_transcribestreaming::types::{
-    AudioEvent, AudioStream, LanguageCode, MediaEncoding, TranscriptResultStream,
-};
+use aws_sdk_transcribestreaming::types::{LanguageCode};
 use futures_util::future::try_join;
-use futures_util::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display};
 use std::io::BufRead;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 
 use tokio::select;
+use crate::asr::Event;
 
 #[derive(Clone, Debug)]
 pub struct LessonsManager {
     translate_client: aws_sdk_translate::Client,
     polly_client: aws_sdk_polly::Client,
-    transcript_client: aws_sdk_transcribestreaming::Client,
     lessons: Arc<RwLock<BTreeMap<u32, Lesson>>>,
 }
 
 impl LessonsManager {
     pub(crate) fn new(sdk_config: &SdkConfig) -> Self {
-        let transcript_client = aws_sdk_transcribestreaming::Client::new(sdk_config);
         let translate_client = aws_sdk_translate::Client::new(sdk_config);
         let polly_client = aws_sdk_polly::Client::new(sdk_config);
         LessonsManager {
             translate_client,
             polly_client,
-            transcript_client,
             lessons: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
@@ -78,11 +69,11 @@ impl Lesson {
         }
     }
 
-    pub(crate) fn voice_channel(&self) -> tokio::sync::mpsc::Sender<Vec<u8>> {
-        self.inner.speaker_voice_channel.clone()
+    pub(crate) async fn send(&self, frame: Vec<i16>) -> anyhow::Result<()> {
+        Ok(self.inner.speaker_voice_channel.send(frame).await?)
     }
 
-    pub(crate) fn transcript_channel(&self) -> tokio::sync::broadcast::Receiver<String> {
+    pub(crate) fn transcript_channel(&self) -> tokio::sync::broadcast::Receiver<Event> {
         self.inner.speaker_transcript.subscribe()
     }
 }
@@ -99,56 +90,17 @@ impl From<InnerLesson> for Lesson {
 struct InnerLesson {
     parent: LessonsManager,
     speaker_lang: LanguageCode,
-    speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<u8>>,
-    speaker_transcript: tokio::sync::broadcast::Sender<String>,
+    speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<i16>>,
+    speaker_transcript: tokio::sync::broadcast::Sender<Event>,
     lang_lessons: RwLock<BTreeMap<String, Weak<InnerLangLesson>>>,
     drop_handler: Option<tokio::sync::oneshot::Sender<Signal>>,
 }
 
 impl InnerLesson {
     fn new(parent: LessonsManager, speaker_lang: LanguageCode) -> InnerLesson {
-        let (speaker_transcript, _) = tokio::sync::broadcast::channel::<String>(128);
-        let shared_speaker_transcript = speaker_transcript.clone();
+        let (speaker_transcript, _) = tokio::sync::broadcast::channel::<Event>(128);
         let (speaker_voice_channel, mut speaker_voice_rx) = tokio::sync::mpsc::channel(128);
         let (drop_handler, drop_rx) = tokio::sync::oneshot::channel::<Signal>();
-        let transcript_client = parent.transcript_client.clone();
-        let shared_speak_lang = speaker_lang.clone();
-
-        tokio::spawn(async move {
-            let fut = async {
-                let input_stream = stream! {
-                    while let Some(raw) = speaker_voice_rx.recv().await {
-                        yield Ok(AudioStream::AudioEvent(AudioEvent::builder().audio_chunk(Blob::new(raw)).build()));
-                    }
-                };
-                let output = transcript_client
-                    .start_stream_transcription()
-                    .language_code(shared_speak_lang) //LanguageCode::EnGb
-                    .media_sample_rate_hertz(16000)
-                    .media_encoding(MediaEncoding::Pcm)
-                    .audio_stream(input_stream.into())
-                    .send()
-                    .await
-                    .map_err(|e| StreamTranscriptionError::EstablishStreamError(Box::new(e)))?;
-
-                let output_stream = to_stream(output);
-                output_stream
-                    .try_for_each(|text| async {
-                        let _ = shared_speaker_transcript.send(text);
-                        Ok(())
-                    })
-                    .await?;
-                Ok(()) as Result<(), StreamTranscriptionError>
-            };
-            select! {
-                res = fut => {
-                    if let Err(e) = res {
-                        println!("Error: {:?}", e);
-                    }
-                }
-                _ = drop_rx => {}
-            }
-        });
 
         InnerLesson {
             parent,
@@ -220,10 +172,10 @@ impl LangLesson {
         let (drop_handler, drop_rx) = tokio::sync::oneshot::channel::<Signal>();
         tokio::spawn(async move {
             let fut = async {
-                while let Ok(text) = transcript_rx.recv().await {
+                while let Ok(evt) = transcript_rx.recv().await {
                     let output = translate_client
                         .translate_text()
-                        .text(text)
+                        .text(evt.transcript)
                         .source_language_code(shared_speaker_lang.as_str())
                         .target_language_code(shared_lang.clone())
                         .send()
@@ -375,31 +327,6 @@ impl Drop for InnerVoiceLesson {
     }
 }
 
-fn to_stream(
-    mut output: StartStreamTranscriptionOutput,
-) -> impl Stream<Item = Result<String, StreamTranscriptionError>> {
-    stream! {
-        while let Some(event) = output
-            .transcript_result_stream
-            .recv()
-            .await
-            .map_err(|e| StreamTranscriptionError::TranscriptResultStreamError(Box::new(e)))? {
-            match event {
-                TranscriptResultStream::TranscriptEvent(transcript_event) => {
-                    let transcript = transcript_event.transcript.expect("transcript");
-                    for result in transcript.results.unwrap_or_default() {
-                        if !result.is_partial {
-                            let first_alternative = &result.alternatives.as_ref().expect("should have")[0];
-                            let slice = first_alternative.transcript.as_ref().expect("should have");
-                            yield Ok(slice.clone());
-                        }
-                    }
-                }
-                _ => yield Err(StreamTranscriptionError::Unknown),
-            }
-        }
-    }
-}
 
 // {"time":180,"type":"viseme","value":"r"}
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -448,35 +375,4 @@ async fn synthesize_speech(
         .flat_map(|line| Ok::<Viseme, anyhow::Error>(serde_json::from_str::<Viseme>(&line?)?))
         .collect();
     Ok((parsed, audio.audio_stream))
-}
-
-#[derive(Debug)]
-enum StreamTranscriptionError {
-    EstablishStreamError(Box<dyn Error + Send + Sync>),
-    TranscriptResultStreamError(Box<dyn Error + Send + Sync>),
-    Unknown,
-}
-
-impl Display for StreamTranscriptionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StreamTranscriptionError::EstablishStreamError(e) => {
-                write!(f, "EstablishStreamError: {}", e)
-            }
-            StreamTranscriptionError::TranscriptResultStreamError(e) => {
-                write!(f, "TranscriptResultStreamError: {}", e)
-            }
-            StreamTranscriptionError::Unknown => write!(f, "Unknown"),
-        }
-    }
-}
-
-impl Error for StreamTranscriptionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            StreamTranscriptionError::EstablishStreamError(e) => Some(e.as_ref()),
-            StreamTranscriptionError::TranscriptResultStreamError(e) => Some(e.as_ref()),
-            StreamTranscriptionError::Unknown => None,
-        }
-    }
 }

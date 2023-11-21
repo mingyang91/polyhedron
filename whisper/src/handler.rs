@@ -77,16 +77,6 @@ impl std::error::Error for Error {
     }
 }
 
-fn u8_to_i16(input: &[u8]) -> Vec<i16> {
-    input
-        .chunks_exact(2)
-        .map(|chunk| {
-            let mut buf = [0u8; 2];
-            buf.copy_from_slice(chunk);
-            i16::from_le_bytes(buf)
-        })
-        .collect::<Vec<i16>>()
-}
 
 #[derive(Clone, Debug)]
 pub enum Output {
@@ -205,11 +195,6 @@ impl WhisperHandler {
 
     pub async fn send_i16(&mut self, data: Vec<i16>) -> Result<(), mpsc::error::SendError<Vec<i16>>> {
         self.tx.send(data).await
-    }
-
-    pub async fn send_bytes(&mut self, data: Vec<u8>) -> Result<(), mpsc::error::SendError<Vec<i16>>> {
-        let i16_data = u8_to_i16(&data);
-        self.send_i16(i16_data).await
     }
 }
 
