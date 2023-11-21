@@ -97,6 +97,7 @@ async fn stream_speaker(
         .lessons_manager
         .create_lesson(
             query.id,
+            ASR_Engine::AWS,
             query.lang.clone().parse().expect("Not supported lang"),
         )
         .await;

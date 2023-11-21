@@ -10,7 +10,7 @@ use std::io::BufRead;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use tracing::warn;
+use tracing::{error, warn};
 
 use tokio::select;
 use crate::asr::{Event, aws::AWS_ASR, ASR};
@@ -43,6 +43,11 @@ impl Deref for LessonsManager {
     }
 }
 
+pub(crate) enum ASR_Engine {
+    AWS,
+    Whisper,
+}
+
 impl LessonsManager {
     pub(crate) fn new(sdk_config: &SdkConfig) -> Self {
         let translate_client = aws_sdk_translate::Client::new(sdk_config);
@@ -55,9 +60,9 @@ impl LessonsManager {
         LessonsManager { inner: Arc::new(inner) }
     }
 
-    pub(crate) async fn create_lesson(&self, id: u32, speaker_lang: LanguageCode) -> Lesson {
+    pub(crate) async fn create_lesson(&self, id: u32, engine: ASR_Engine, speaker_lang: LanguageCode) -> Lesson {
         let mut map = self.lessons.write().await;
-        let lesson: Lesson = InnerLesson::new(self.clone(), speaker_lang).await.into();
+        let lesson: Lesson = InnerLesson::new(self.clone(), engine, speaker_lang).await.into();
         map.insert(id, lesson.clone());
         lesson
     }
@@ -129,39 +134,37 @@ pub(crate) struct InnerLesson {
 }
 
 impl InnerLesson {
-    async fn new(parent: LessonsManager, speaker_lang: LanguageCode) -> InnerLesson {
+    async fn new(parent: LessonsManager, engine: ASR_Engine, speaker_lang: LanguageCode) -> InnerLesson {
         let (speaker_transcript, _) = tokio::sync::broadcast::channel::<Event>(128);
+        let shared_speaker_transcript = speaker_transcript.clone();
         let (speaker_voice_channel, mut speaker_voice_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(128);
         let (drop_handler, drop_rx) = tokio::sync::oneshot::channel::<Signal>();
-        let mut aws_asr = AWS_ASR::from_env(LanguageCode::EnGb)
-            .await
-            .expect("Failed to initialize AWS ASR");
-        #[cfg(feature = "whisper")]
-        let mut whisper_asr = Whisper_ASR::from_config()
-            .await
-            .expect("Failed to initialize Whisper ASR");
+
+        let mut asr: Box<dyn ASR + Send> = match engine {
+            ASR_Engine::AWS => Box::new(AWS_ASR::from_env(speaker_lang.clone()).await.expect("Failed to initialize AWS ASR")),
+            ASR_Engine::Whisper => {
+                #[cfg(not(feature = "whisper"))]
+                unimplemented!("Whisper ASR is not enabled");
+                #[cfg(feature = "whisper")]
+                Box::new(Whisper_ASR::from_config().await.expect("Failed to initialize Whisper ASR"))
+            },
+        };
 
         tokio::spawn(async move {
             let fut = async {
-                #[cfg(not(feature = "whisper"))]
-                let mut transcribe = aws_asr.subscribe();
-                #[cfg(feature = "whisper")]
-                let mut transcribe = whisper_asr.subscribe();
+                let mut transcribe = asr.subscribe();
                 loop {
                     select! {
-                        msg = speaker_voice_rx.recv() => {
-                            match msg {
+                        msg_opt = speaker_voice_rx.recv() => {
+                            match msg_opt {
                                 Some(frame) => {
-                                    #[cfg(not(feature = "whisper"))]
-                                    let res = aws_asr.frame(frame).await?;
-                                    #[cfg(feature = "whisper")]
-                                    let res = whisper_asr.frame(frame).await?;
+                                    asr.frame(frame).await?;
                                 },
                                 None => break,
                             }
                         },
-                        a = transcribe.recv() => {
-                            todo!()
+                        evt_poll = transcribe.recv() => {
+                            shared_speaker_transcript.send(evt_poll?)?;
                         }
                     }
                 }
@@ -171,7 +174,7 @@ impl InnerLesson {
             select! {
                 res = fut => {
                     if let Err(e) = res {
-                        warn!("Error: {:?}", e);
+                        error!("Error: {:?}", e);
                     }
                 }
                 _ = drop_rx => {}
