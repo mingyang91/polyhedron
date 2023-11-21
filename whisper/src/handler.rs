@@ -6,35 +6,47 @@ use std::{
 };
 use fvad::SampleRate;
 
-use once_cell::sync::Lazy;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, OnceCell};
 use tokio::time::Instant;
-use tracing::{debug, trace, warn};
-use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperState, WhisperToken, WhisperTokenData};
+use tracing::{warn};
+use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperError, WhisperState, WhisperToken, WhisperTokenData};
 
-use crate::config::{Settings, SETTINGS};
 use crate::{config::WhisperConfig, group::GroupedWithin};
 
 const WHISPER_SAMPLE_RATE: usize = whisper_rs_sys::WHISPER_SAMPLE_RATE as usize;
 
-static WHISPER_CONTEXT: Lazy<WhisperContext> = Lazy::new(|| {
-    let settings = Settings::new().expect("Failed to initialize settings.");
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        let info = whisper_rs::print_system_info();
-        debug!("system_info: n_threads = {} / {} | {}\n",
-            settings.whisper.params.n_threads.unwrap_or(0),
-            std::thread::available_parallelism().map(|c| c.get()).unwrap_or(0),
-            info);
-    }
-    WhisperContext::new(&settings.whisper.model).expect("failed to create WhisperContext")
-});
+pub struct Context {
+    context: WhisperContext,
+}
 
+impl <'a> Context {
+    pub fn new(model: &str) -> Result<Context, WhisperError> {
+        WhisperContext::new(model)
+            .map(|context| Self { context })
+    }
+
+    pub fn create_handler(&'static self, config: &'static WhisperConfig, prompt: String) -> Result<WhisperHandler, Error> {
+        WhisperHandler::new(&self.context, config, prompt)
+    }
+}
+
+static WHISPER_CONTEXT: OnceCell<WhisperContext> = OnceCell::const_new();
+
+async fn initialize_whisper_context(model: String) -> WhisperContext {
+    tokio::task::spawn_blocking(move || {
+        WhisperContext::new(&model).expect("failed to create WhisperContext")
+    }).await.expect("failed to spawn")
+}
+
+async fn get_whisper_context(model: String) -> &'static WhisperContext {
+    WHISPER_CONTEXT.get_or_init(|| initialize_whisper_context(model)).await
+}
 
 #[derive(Debug)]
-pub(crate) enum Error {
+pub enum Error {
     WhisperError {
         description: String,
-        error: whisper_rs::WhisperError,
+        error: WhisperError,
     },
 }
 
@@ -97,22 +109,25 @@ pub struct WhisperHandler {
 }
 
 impl WhisperHandler {
-    pub(crate) fn new(config: WhisperConfig, prompt: String) -> Result<Self, Error> {
+
+    fn new(whisper_context: &'static WhisperContext, config: &'static WhisperConfig, prompt: String) -> Result<Self, Error> {
+        // let whisper_context = get_whisper_context(config.model.clone()).await;
+        let state = whisper_context
+            .create_state()
+            .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
+        let preset_prompt_tokens = whisper_context
+            .tokenize(&prompt, config.max_prompt_tokens)
+            .map_err(|e| Error::whisper_error("failed to tokenize prompt", e))?;
         let vad_slice_size = WHISPER_SAMPLE_RATE / 100 * 3;
         let (stop_handle, mut stop_signal) = oneshot::channel();
         let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<i16>>(128);
         let (transcription_tx, _) = broadcast::channel::<Vec<Output>>(128);
         let shared_transcription_tx = transcription_tx.clone();
-        let state = WHISPER_CONTEXT
-            .create_state()
-            .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
-        let preset_prompt_tokens = WHISPER_CONTEXT
-            .tokenize(prompt.as_str(), SETTINGS.whisper.max_prompt_tokens)
-            .map_err(|e| Error::whisper_error("failed to tokenize prompt", e))?;
+
         tokio::task::spawn_blocking(move || {
             let mut vad = fvad::Fvad::new().expect("failed to create VAD")
                 .set_sample_rate(SampleRate::Rate16kHz);
-            let mut detector = Detector::new(state, &SETTINGS.whisper, preset_prompt_tokens);
+            let mut detector = Detector::new(state, &config, preset_prompt_tokens);
             let mut grouped = GroupedWithin::new(
                 detector.n_samples_step,
                 Duration::from_millis(config.step_ms as u64),
@@ -368,7 +383,9 @@ mod test {
     use std::io::{stdout, Write};
     use hound;
     use tracing_test;
-    use tracing::info;
+    use tracing::{info, debug};
+    use crate::config::WhisperParams;
+    use lazy_static::lazy_static;
 
     async fn print_output(output: Output) {
         match output {
@@ -386,18 +403,50 @@ mod test {
         }
         stdout().flush().unwrap();
     }
+
+    lazy_static! {
+        static ref CONFIG: WhisperConfig = WhisperConfig {
+            length_ms: 5000,
+            step_ms: 500,
+            keep_ms: 200,
+            model: "models/ggml-large-v3.bin".to_string(),
+            max_prompt_tokens: 32,
+            context_confidence_threshold: 0.5,
+            params: WhisperParams {
+                n_threads: None,
+                max_tokens: None,
+                audio_ctx: None,
+                speed_up: None,
+                translate: None,
+                no_context: None,
+                print_special: None,
+                print_realtime: None,
+                print_progress: None,
+                token_timestamps: None,
+                no_timestamps: None,
+                temperature_inc: None,
+                entropy_threshold: None,
+                single_segment: Some(true),
+                suppress_non_speech_tokens: None,
+                n_max_text_ctx: None,
+                language: Some("en".to_string()),
+            }
+        };
+
+        static ref CONTEXT: Context = Context::new(&CONFIG.model).expect("failed to create WhisperContext");
+    }
+
     #[tokio::test]
     #[tracing_test::traced_test]
     async fn test_whisper_handler() {
-        let mut whisper_handler = WhisperHandler::new(
-            SETTINGS.whisper.clone(),
-            "Harry Potter and the Philosopher's Stone".to_string(),
-        ).expect("failed to create WhisperHandler");
+        let mut whisper_handler = CONTEXT
+            .create_handler(&CONFIG, "Harry Potter and the Philosopher's Stone".to_string())
+            .expect("failed to create WhisperHandler");
 
         let wav = hound::WavReader::open("samples/ADHD_1A.wav")
             .expect("failed to open wav");
         let spec = wav.spec();
-        println!("{:?}", spec);
+        info!("{:?}", spec);
         let samples = wav
             .into_samples::<i16>()
             .map(|s| s.unwrap())
@@ -423,9 +472,9 @@ mod test {
 
                 match output {
                     Output::Stable(stable) => {
-                        println!("{}", stable.text);
+                        debug!("{}", stable.text);
                     },
-                    Output::Unstable(unstable) => {
+                    Output::Unstable(_unstable) => {
 
                     }
                 }

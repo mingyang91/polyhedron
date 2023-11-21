@@ -3,6 +3,9 @@ name = "polyhedron"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["whisper"]
+
 [dependencies]
 anyhow = "1.0"
 async-stream = "0.3"
@@ -21,6 +24,12 @@ tokio-stream = "0.1"
 tracing = { version = "0.1", features = [] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fvad = "0.1"
+whisper = { path="whisper", optional = true }
+async-trait = "0.1.74"
+lazy_static = { version = "1.4.0", features = [] }
+
+[features]
+whisper = ["dep:whisper"]
 
 [dependencies.poem]
 version = "1.3"

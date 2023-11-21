@@ -5,6 +5,8 @@
 
 #![allow(clippy::result_large_err)]
 
+#[cfg(feature = "whisper")]
+extern crate whisper;
 use aws_sdk_transcribestreaming::meta::PKG_VERSION;
 use futures_util::{stream::StreamExt, SinkExt};
 use poem::{
@@ -22,12 +24,13 @@ use tokio::select;
 use tracing::debug;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use crate::{config::*, lesson::*, whisper::*};
+use crate::{config::*, lesson::*};
+#[cfg(feature = "whisper")]
+use crate::whisper::*;
 
 mod config;
-mod group;
 mod lesson;
-mod whisper;
+mod asr;
 
 #[derive(Clone)]
 struct Context {
@@ -104,20 +107,23 @@ async fn stream_speaker(
     ws.on_upgrade(|mut socket| async move {
         let _origin_tx = lesson.voice_channel();
         let mut transcribe_rx = lesson.transcript_channel();
-        let mut whisper = WhisperHandler::new(SETTINGS.whisper.clone(), prompt)
+        #[cfg(feature = "whisper")]
+        let mut whisper = asr::whisper::whisper_asr::CONTEXT.create_handler(&SETTINGS.whisper, prompt)
             .expect("failed to create whisper");
+        #[cfg(feature = "whisper")]
         let mut whisper_transcribe_rx = whisper.subscribe();
         loop {
             select! {
-                w = whisper_transcribe_rx.recv() => {
-                    let Ok(_txt) = w else {
-                        // TODO: handle msg
-                        continue
-                    };
-                }
+                // w = whisper_transcribe_rx.recv() => {
+                //     let Ok(_txt) = w else {
+                //         // TODO: handle msg
+                //         continue
+                //     };
+                // }
                 msg = socket.next() => {
                     match msg.as_ref() {
                         Some(Ok(Message::Binary(bin))) => {
+                            #[cfg(feature = "whisper")]
                             let _ = whisper.send_bytes(bin.to_vec()).await; // whisper test
                             // if let Err(e) = origin_tx.send(bin.to_vec()).await {
                             //     tracing::warn!("failed to send voice: {}", e);
