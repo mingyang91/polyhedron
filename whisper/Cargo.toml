@@ -1,0 +1,32 @@
+[package]
+name = "whisper"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "whisper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "whisper"
+path = "src/main.rs"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+once_cell = "1.18"
+fvad = "0.1"
+tokio = { version = "1.34", features = ["macros", "rt-multi-thread", "sync", "signal", "time"] }
+tracing = { version = "0.1", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+lazy_static = { version = "1.4.0", features = [] }
+
+[dependencies.whisper-rs]
+git = "https://github.com/mingyang91/whisper-rs.git"
+features = ["coreml", "metal"]
+[dependencies.whisper-rs-sys]
+git = "https://github.com/mingyang91/whisper-rs.git"
+package = "whisper-rs-sys"
+
+[dev-dependencies]
+hound = "*"
+tracing-test = "0.2.4"

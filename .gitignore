@@ -1,3 +1,5 @@
 /target
 .idea/
 models
+whisper/models
+whisper/samples
