@@ -5,18 +5,18 @@ use aws_sdk_transcribestreaming::types::{LanguageCode};
 use futures_util::future::try_join;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::io::BufRead;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use tracing::{error, warn};
+use tracing::{error};
 
 use tokio::select;
-use crate::asr::{Event, aws::AWS_ASR, ASR};
+use crate::asr::{Event, aws::AwsAsr, ASR};
 
 #[cfg(feature = "whisper")]
-use crate::asr::whisper::Whisper_ASR;
+use crate::asr::whisper::WhisperAsr;
 
 pub struct InnerLessonsManager {
     translate_client: aws_sdk_translate::Client,
@@ -43,23 +43,24 @@ impl Deref for LessonsManager {
     }
 }
 
-pub(crate) enum ASR_Engine {
+pub(crate) enum AsrEngine {
     AWS,
+    #[allow(dead_code)]
     #[cfg(feature = "whisper")]
     Whisper,
 }
 
-impl ASR_Engine {
+impl AsrEngine {
     async fn create(self, lang: LanguageCode) -> Box<dyn ASR + Send> {
         match self {
-            ASR_Engine::AWS => Box::new(
-                AWS_ASR::from_env(lang)
+            AsrEngine::AWS => Box::new(
+                AwsAsr::from_env(lang)
                     .await
                     .expect("Failed to initialize AWS ASR")
             ),
             #[cfg(feature = "whisper")]
-            ASR_Engine::Whisper => Box::new(
-                Whisper_ASR::from_config()
+            AsrEngine::Whisper => Box::new(
+                WhisperAsr::from_config()
                     .await
                     .expect("Failed to initialize Whisper ASR")
             ),
@@ -79,7 +80,7 @@ impl LessonsManager {
         LessonsManager { inner: Arc::new(inner) }
     }
 
-    pub(crate) async fn create_lesson(&self, id: u32, engine: ASR_Engine, speaker_lang: LanguageCode) -> Lesson {
+    pub(crate) async fn create_lesson(&self, id: u32, engine: AsrEngine, speaker_lang: LanguageCode) -> Lesson {
         let mut map = self.lessons.write().await;
         let lesson: Lesson = InnerLesson::new(self.clone(), engine, speaker_lang).await.into();
         map.insert(id, lesson.clone());
@@ -153,7 +154,7 @@ pub(crate) struct InnerLesson {
 }
 
 impl InnerLesson {
-    async fn new(parent: LessonsManager, engine: ASR_Engine, speaker_lang: LanguageCode) -> InnerLesson {
+    async fn new(parent: LessonsManager, engine: AsrEngine, speaker_lang: LanguageCode) -> InnerLesson {
         let (speaker_transcript, _) = tokio::sync::broadcast::channel::<Event>(128);
         let shared_speaker_transcript = speaker_transcript.clone();
         let (speaker_voice_channel, mut speaker_voice_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(128);

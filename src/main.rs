@@ -7,7 +7,10 @@
 
 #[cfg(feature = "whisper")]
 extern crate whisper;
+
+use aws_config::BehaviorVersion;
 use aws_sdk_transcribestreaming::meta::PKG_VERSION;
+use aws_sdk_transcribestreaming::types::LanguageCode;
 use futures_util::{stream::StreamExt, SinkExt};
 use poem::{
     endpoint::{StaticFileEndpoint, StaticFilesEndpoint},
@@ -44,7 +47,7 @@ async fn main() -> Result<(), std::io::Error> {
 
     debug!("Transcribe client version: {}", PKG_VERSION);
 
-    let shared_config = aws_config::load_from_env().await;
+    let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let ctx = Context {
         lessons_manager: LessonsManager::new(&shared_config),
     };
@@ -57,7 +60,9 @@ async fn main() -> Result<(), std::io::Error> {
                 .index_file("index.html"),
         )
         .at("/ws/lesson-speaker", get(stream_speaker))
+        .at("/ws/teacher", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
+        .at("/ws/student", get(stream_listener))
         .at(
             "lesson-speaker",
             StaticFileEndpoint::new("./static/index.html"),
@@ -83,7 +88,8 @@ async fn main() -> Result<(), std::io::Error> {
 #[derive(Deserialize, Debug)]
 pub struct LessonSpeakerQuery {
     id: u32,
-    lang: String,
+    language: String,
+    #[allow(dead_code)] // TODO: use this in the future
     prompt: Option<String>,
 }
 
@@ -93,51 +99,58 @@ async fn stream_speaker(
     query: Query<LessonSpeakerQuery>,
     ws: WebSocket,
 ) -> impl IntoResponse {
-    let lesson = ctx
-        .lessons_manager
-        .create_lesson(
-            query.id,
-            ASR_Engine::AWS,
-            query.lang.clone().parse().expect("Not supported lang"),
-        )
-        .await;
-    let prompt = query.prompt.clone().unwrap_or_default();
-
+    let lessons_manager = ctx.lessons_manager.clone();
     ws.on_upgrade(|mut socket| async move {
+        let Ok(lang) = query.language.parse::<LanguageCode>() else {
+            let _ = socket
+                .send(Message::Text(format!("invalid language code: {}", query.language)))
+                .await;
+            return
+        };
+        let lesson = lessons_manager
+            .create_lesson(
+                query.id,
+                AsrEngine::AWS,
+                lang,
+            )
+            .await;
+
         let mut transcribe_rx = lesson.transcript_channel();
-        loop {
-            select! {
-                msg = socket.next() => {
-                    match msg.as_ref() {
-                        Some(Ok(Message::Binary(bin))) => {
-                            let frame = u8_to_i16(bin);
-                            if let Err(e) = lesson.send(frame).await {
-                                tracing::warn!("failed to send voice: {}", e);
-                                break;
-                            }
-                        },
-                        Some(Ok(_)) => {
+        let fut = async {
+            loop {
+                select! {
+                    msg = socket.next() => {
+                        let Some(res) = msg else { break };
+                        let msg = res?;
+                        let Message::Binary(bin) = msg else {
                             tracing::warn!("Other: {:?}", msg);
-                        },
-                        Some(Err(e)) => {
-                            tracing::warn!("Error: {:?}", e);
-                        },
-                        None => {
-                            if let Err(e) = socket.close().await {
-                                tracing::debug!("Message: {:?}, {}", msg, e);
-                            }
-                            break;
-                        }
-                    }
-                },
-                output = transcribe_rx.recv() => {
-                    if let Ok(evt) = output {
+                            continue
+                        };
+                        let frame = u8_to_i16(&bin);
+                        lesson.send(frame).await?
+                    },
+                    output = transcribe_rx.recv() => {
+                        let evt = output?;
                         tracing::trace!("Transcribed: {}", evt.transcript);
-                        let evt = LiveLessonTextEvent::Transcription { text: evt.transcript };
-                        let json = serde_json::to_string(&evt).expect("failed to serialize");
-                        let _ = socket.send(Message::Text(json)).await.expect("failed to send");
-                    }
-                },
+                        let evt = LiveLessonTextEvent::Transcription { content: evt.transcript, is_final: evt.is_final };
+                        let Ok(json) = serde_json::to_string(&evt) else {
+                            tracing::warn!("failed to serialize json: {:?}", evt);
+                            continue
+                        };
+                        socket.send(Message::Text(json)).await?
+                    },
+                }
+            }
+            Ok(())
+        };
+
+        let res: anyhow::Result<()> = fut.await;
+        match res {
+            Ok(()) => {
+                tracing::info!("lesson speaker closed");
+            }
+            Err(e) => {
+                tracing::warn!("lesson speaker error: {}", e);
             }
         }
     })
@@ -146,26 +159,29 @@ async fn stream_speaker(
 #[derive(Deserialize, Debug)]
 pub struct LessonListenerQuery {
     id: u32,
-    lang: String,
+    language: String,
     voice: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "type")]
 enum LiveLessonTextEvent {
-    Transcription { text: String },
-    Translation { text: String },
+    #[serde(rename = "original")]
+    Transcription {
+        content: String,
+        #[serde(rename = "isFinal")]
+        is_final: bool
+    },
+    Translation { content: String },
     LipSync { visemes: Vec<Viseme> },
 }
-
 #[handler]
 async fn stream_listener(
     ctx: Data<&Context>,
     query: Query<LessonListenerQuery>,
     ws: WebSocket,
 ) -> impl IntoResponse {
-    let lesson_opt = ctx.lessons_manager.get_lesson(query.id).await;
-    debug!("listener param = {:?}", query);
+    let lessons_manager = ctx.lessons_manager.clone();
 
     ws.on_upgrade(|mut socket| async move {
         let voice_id = match query.voice.parse() {
@@ -177,6 +193,9 @@ async fn stream_listener(
                 return;
             }
         };
+
+        let lesson_opt = lessons_manager.get_lesson(query.id).await;
+        debug!("listener param = {:?}", query);
         let Some(lesson) = lesson_opt else {
             let _ = socket
                 .send(Message::Text("lesson not found".to_string()))
@@ -184,54 +203,62 @@ async fn stream_listener(
             return;
         };
         let mut transcript_rx = lesson.transcript_channel();
-        let mut lang_lesson = lesson.get_or_init(query.lang.clone()).await;
+        let mut lang_lesson = lesson.get_or_init(query.language.clone()).await;
         let mut translate_rx = lang_lesson.translated_channel();
         let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
         let mut voice_rx = voice_lesson.voice_channel();
         let mut lip_sync_rx = voice_lesson.lip_sync_channel();
 
-        loop {
-            select! {
-                transcript = transcript_rx.recv() => {
-                    if let Ok(evt) = transcript {
-                        let evt = LiveLessonTextEvent::Transcription { text: evt.transcript };
-                        match serde_json::to_string(&evt) {
-                            Ok(json) => {
-                                tracing::debug!("Transcribed: {}", json);
-                                let _ = socket.send(Message::Text(json)).await;
-                            },
-                            Err(e) => {
-                                tracing::error!("failed to serialize: {}", e);
-                            }
-                        }
-                    }
-                },
-                translated = translate_rx.recv() => {
-                    if let Ok(translated) = translated {
-                        let evt = LiveLessonTextEvent::Translation { text: translated };
-                        match serde_json::to_string(&evt) {
-                            Ok(json) => {
-                                tracing::debug!("Translated: {}", json);
-                                let _ = socket.send(Message::Text(json)).await;
-                            },
-                            Err(e) => {
-                                tracing::error!("failed to serialize: {}", e);
-                            }
-                        }
-                    }
-                },
-                voice = voice_rx.recv() => {
-                    if let Ok(voice) = voice {
-                        let _ = socket.send(Message::Binary(voice)).await;
-                    }
-                },
-                visemes = lip_sync_rx.recv() => {
-                    if let Ok(visemes) = visemes {
+        let fut = async {
+            loop {
+                select! {
+                    transcript_poll = transcript_rx.recv() => {
+                        let transcript = transcript_poll?;
+                        let evt = LiveLessonTextEvent::Transcription {
+                            content: transcript.transcript,
+                            is_final: transcript.is_final
+                        };
+                        let Ok(json) = serde_json::to_string(&evt) else {
+                            tracing::warn!("failed to serialize: {:?}", evt);
+                            continue
+                        };
+                        tracing::debug!("Transcribed: {}", json);
+                        socket.send(Message::Text(json)).await?
+                    },
+                    translated_poll = translate_rx.recv() => {
+                        let translated = translated_poll?;
+                        let evt = LiveLessonTextEvent::Translation { content: translated };
+                        let Ok(json) = serde_json::to_string(&evt) else {
+                            tracing::warn!("failed to serialize: {:?}", evt);
+                            continue
+                        };
+                        tracing::debug!("Translated: {}", json);
+                        socket.send(Message::Text(json)).await?
+                    },
+                    voice_poll = voice_rx.recv() => {
+                        let voice = voice_poll?;
+                        socket.send(Message::Binary(voice)).await?
+                    },
+                    visemes_poll = lip_sync_rx.recv() => {
+                        let visemes = visemes_poll?;
                         let evt = LiveLessonTextEvent::LipSync { visemes };
-                        let json = serde_json::to_string(&evt).expect("failed to serialize");
-                        let _ = socket.send(Message::Text(json)).await;
-                    }
-                },
+                        let Ok(json) = serde_json::to_string(&evt) else {
+                            tracing::warn!("failed to serialize: {:?}", evt);
+                            continue
+                        };
+                        socket.send(Message::Text(json)).await?
+                    },
+                }
+            }
+        };
+
+        let res: anyhow::Result<()> = fut.await;
+        match res {
+            Ok(()) => {
+                tracing::info!("lesson listener closed");
+            }
+            Err(e) => {
+                tracing::warn!("lesson listener error: {}", e);
             }
         }
     })

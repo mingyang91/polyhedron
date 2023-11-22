@@ -9,7 +9,6 @@ pub struct WhisperConfig {
     pub(crate) keep_ms: usize,
     pub model: String,
     pub(crate) max_prompt_tokens: usize,
-    pub(crate) context_confidence_threshold: f32,
 }
 
 #[allow(dead_code)]

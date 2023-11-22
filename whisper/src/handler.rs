@@ -6,7 +6,7 @@ use std::{
 };
 use fvad::SampleRate;
 
-use tokio::sync::{broadcast, mpsc, oneshot, OnceCell};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{warn};
 use whisper_rs::{convert_integer_to_float_audio, WhisperContext, WhisperError, WhisperState, WhisperToken, WhisperTokenData};
@@ -28,18 +28,6 @@ impl <'a> Context {
     pub fn create_handler(&'static self, config: &'static WhisperConfig, prompt: String) -> Result<WhisperHandler, Error> {
         WhisperHandler::new(&self.context, config, prompt)
     }
-}
-
-static WHISPER_CONTEXT: OnceCell<WhisperContext> = OnceCell::const_new();
-
-async fn initialize_whisper_context(model: String) -> WhisperContext {
-    tokio::task::spawn_blocking(move || {
-        WhisperContext::new(&model).expect("failed to create WhisperContext")
-    }).await.expect("failed to spawn")
-}
-
-async fn get_whisper_context(model: String) -> &'static WhisperContext {
-    WHISPER_CONTEXT.get_or_init(|| initialize_whisper_context(model)).await
 }
 
 #[derive(Debug)]

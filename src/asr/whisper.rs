@@ -16,19 +16,19 @@ lazy_static! {
         .expect("Failed to initialize whisper context");
 }
 
-pub struct Whisper_ASR {
+pub struct WhisperAsr {
     whisper: WhisperHandler,
     tx: tokio::sync::broadcast::Sender<Event>,
 }
 
-impl Debug for Whisper_ASR {
+impl Debug for WhisperAsr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Whisper_ASR")
     }
 }
 
-impl Whisper_ASR {
-    pub async fn from_config() -> Result<Whisper_ASR, Error> {
+impl WhisperAsr {
+    pub async fn from_config() -> Result<WhisperAsr, Error> {
         let whisper = CONTEXT.create_handler(&SETTINGS.whisper, "".to_string())?;
         let mut output_rx = whisper.subscribe();
         let (tx, _) = tokio::sync::broadcast::channel(64);
@@ -71,7 +71,7 @@ impl Whisper_ASR {
 }
 
 #[async_trait]
-impl ASR for Whisper_ASR {
+impl ASR for WhisperAsr {
     async fn frame(&mut self, frame: Vec<i16>) -> anyhow::Result<()> {
         Ok(self.whisper.send_i16(frame).await?)
     }
