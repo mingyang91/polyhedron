@@ -272,6 +272,7 @@ impl LangLesson {
         tokio::spawn(async move {
             let fut = async {
                 while let Ok(evt) = transcript_rx.recv().await {
+                    if !evt.is_final { continue }
                     let output = translate_client
                         .translate_text()
                         .text(evt.transcript)
