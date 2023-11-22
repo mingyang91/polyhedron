@@ -21,6 +21,7 @@ tokio-stream = "0.1"
 tracing = { version = "0.1", features = [] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1.74"
+lazy_static = "1.4.0"
 
 [features]
 whisper = ["dep:whisper"]
