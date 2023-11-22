@@ -45,7 +45,26 @@ impl Deref for LessonsManager {
 
 pub(crate) enum ASR_Engine {
     AWS,
+    #[cfg(feature = "whisper")]
     Whisper,
+}
+
+impl ASR_Engine {
+    async fn create(self, lang: LanguageCode) -> Box<dyn ASR + Send> {
+        match self {
+            ASR_Engine::AWS => Box::new(
+                AWS_ASR::from_env(lang)
+                    .await
+                    .expect("Failed to initialize AWS ASR")
+            ),
+            #[cfg(feature = "whisper")]
+            ASR_Engine::Whisper => Box::new(
+                Whisper_ASR::from_config()
+                    .await
+                    .expect("Failed to initialize Whisper ASR")
+            ),
+        }
+    }
 }
 
 impl LessonsManager {
@@ -140,15 +159,7 @@ impl InnerLesson {
         let (speaker_voice_channel, mut speaker_voice_rx) = tokio::sync::mpsc::channel::<Vec<i16>>(128);
         let (drop_handler, drop_rx) = tokio::sync::oneshot::channel::<Signal>();
 
-        let mut asr: Box<dyn ASR + Send> = match engine {
-            ASR_Engine::AWS => Box::new(AWS_ASR::from_env(speaker_lang.clone()).await.expect("Failed to initialize AWS ASR")),
-            ASR_Engine::Whisper => {
-                #[cfg(not(feature = "whisper"))]
-                unimplemented!("Whisper ASR is not enabled");
-                #[cfg(feature = "whisper")]
-                Box::new(Whisper_ASR::from_config().await.expect("Failed to initialize Whisper ASR"))
-            },
-        };
+        let mut asr: Box<dyn ASR + Send> = engine.create(speaker_lang.clone()).await;
 
         tokio::spawn(async move {
             let fut = async {

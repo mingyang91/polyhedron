@@ -10,6 +10,15 @@ path = "src/lib.rs"
 [[bin]]
 name = "whisper"
 path = "src/main.rs"
+[features]
+default = ["whisper-rs/default"]
+coreml = ["whisper-rs/coreml"]
+cuda = ["whisper-rs/cuda"]
+metal = ["whisper-rs/metal"]
+simd = ["whisper-rs/simd"]
+openblas = ["whisper-rs/openblas"]
+opencl = ["whisper-rs/opencl"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -22,7 +31,7 @@ lazy_static = { version = "1.4.0", features = [] }
 
 [dependencies.whisper-rs]
 git = "https://github.com/mingyang91/whisper-rs.git"
-features = ["coreml", "metal"]
+
 [dependencies.whisper-rs-sys]
 git = "https://github.com/mingyang91/whisper-rs.git"
 package = "whisper-rs-sys"
