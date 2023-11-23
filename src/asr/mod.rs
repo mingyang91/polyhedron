@@ -16,3 +16,15 @@ pub(crate) trait ASR {
     async fn frame(&mut self, frame: Vec<i16>) -> anyhow::Result<()>;
     fn subscribe(&mut self) -> Receiver<Event>;
 }
+
+
+#[allow(dead_code)]
+pub(crate) fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
+    slice
+        .iter()
+        .flat_map(|&sample| {
+            [sample as u8, (sample >> 8) as u8]
+        })
+        .collect()
+}
+

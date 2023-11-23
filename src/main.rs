@@ -276,7 +276,7 @@ async fn stream_listener(
     })
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 enum SingleEvent {
     #[serde(rename = "original")]
     Transcription {
@@ -403,4 +403,127 @@ fn u8_to_i16(input: &[u8]) -> Vec<i16> {
             i16::from_le_bytes(buf)
         })
         .collect::<Vec<i16>>()
+}
+
+#[cfg(test)]
+mod test {
+    use std::cell::{Cell};
+    use std::time::Duration;
+    use async_stream::stream;
+    use poem::listener::{Acceptor, Listener};
+    use tokio::pin;
+    use tokio::time::sleep;
+    use tokio_stream::StreamExt;
+    use tokio_tungstenite::{
+        connect_async,
+        tungstenite::Message,
+    };
+    use tracing::{info, error};
+    use crate::asr::slice_i16_to_u8;
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tracing_test::traced_test]
+    async fn test_single() {
+        let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+        let ctx = Context {
+            lessons_manager: LessonsManager::new(&shared_config),
+        };
+
+        let query = SingleQuery {
+            id: 1,
+            from: "zh-CN".to_string(),
+            to: "en-US".to_string(),
+            voice: None,
+        };
+
+        let acceptor = TcpListener::bind("[::]:0")
+            .into_acceptor()
+            .await
+            .unwrap();
+        let addr = acceptor
+            .local_addr()
+            .remove(0)
+            .as_socket_addr()
+            .cloned()
+            .unwrap();
+        let server = Server::new_with_acceptor(acceptor);
+        let handle = tokio::spawn(async move {
+            let _ = server.run(
+                Route::new()
+                    .at("/ws/voice", get(stream_single))
+                    .data(ctx)
+            ).await;
+        });
+
+        let url = format!(
+            "ws://{}/ws/voice?id={}&from={}&to={}&voice={}",
+            addr, query.id, query.from, query.to, query.voice.unwrap_or("Amy".to_string())
+        );
+        let (mut client_stream, _) = connect_async(url)
+            .await
+            .unwrap();
+
+        client_stream
+            .send(Message::Binary(Vec::new()))
+            .await
+            .unwrap();
+
+
+        let wav = hound::WavReader::open("whisper/samples/samples_jfk.wav")
+            .expect("failed to open wav");
+        let spec = wav.spec();
+        info!("{:?}", spec);
+        let samples = wav
+            .into_samples::<i16>()
+            .map(|s| s.unwrap())
+            .collect::<Vec<i16>>();
+        let chunks = samples.chunks(1600)
+            .map(|chunk| chunk.to_vec())
+            .into_iter();
+
+        let audio_stream = stream! {
+            for chunk in chunks {
+                yield slice_i16_to_u8(&chunk);
+                sleep(Duration::from_millis(10)).await;
+            }
+        };
+        pin!(audio_stream);
+
+        let voice_flag = Cell::new(false);
+        let recv_fut = async {
+            while let Some(voice_slice) = audio_stream.next().await {
+                client_stream.send(Message::Binary(voice_slice)).await?;
+            }
+            info!("sent all voice chunks");
+
+            while let Some(next_msg) = client_stream.next().await {
+                debug!(?next_msg);
+                let msg = next_msg?;
+                let Message::Text(json_str) = msg else { continue };
+                let Ok(evt) = serde_json::from_str::<SingleEvent>(&json_str) else { continue };
+                if let SingleEvent::Voice { .. } = evt {
+                    voice_flag.replace(true);
+                    break
+                }
+            }
+
+            Ok(()) as anyhow::Result<()>
+        };
+
+        select! {
+            res = recv_fut => {
+                if let Err(e) = res {
+                    error!("Error: {:?}", e);
+                }
+            }
+            _ = sleep(Duration::from_secs(10)) => {
+                error!("timeout")
+            }
+        }
+
+        handle.abort();
+
+        assert!(voice_flag.get(), "voice not received");
+    }
 }

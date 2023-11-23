@@ -39,3 +39,6 @@ whisper = { path="whisper", features = ["cuda"], optional = true }
 
 [dev-dependencies]
 tracing-test = "*"
+poem = { version = "1.3", features = ["websocket", "static-files", "test"] }
+tokio-tungstenite = "*"
+hound = "*"

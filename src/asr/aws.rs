@@ -12,7 +12,7 @@ use tokio::select;
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::Stream;
 use futures_util::TryStreamExt;
-use crate::asr::{ASR, Event};
+use crate::asr::{ASR, Event, slice_i16_to_u8};
 
 pub struct AwsAsr {
     speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<i16>>,
@@ -80,16 +80,6 @@ impl AwsAsr {
             drop_handler: Some(drop_handler)
         })
     }
-}
-
-#[allow(dead_code)]
-fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
-    slice
-        .iter()
-        .flat_map(|&sample| {
-            [sample as u8, (sample >> 8) as u8]
-        })
-        .collect()
 }
 
 impl Drop for AwsAsr {
