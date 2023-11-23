@@ -395,11 +395,9 @@ impl InnerVoiceLesson {
                 while let Ok(translated) = translate_rx.recv().await {
                     let res = synthesize_speech(&client, translated, shared_voice_id.clone()).await;
                     match res {
-                        Ok((vec, mut audio_stream)) => {
+                        Ok((vec, audio)) => {
                             let _ = shared_lip_sync_tx.send(vec);
-                            while let Some(Ok(bytes)) = audio_stream.next().await {
-                                let _ = &shared_voice_lesson.send(bytes.to_vec());
-                            }
+                            let _ = &shared_voice_lesson.send(audio);
                         }
                         Err(e) => {
                             return Err(e);
@@ -453,7 +451,7 @@ async fn synthesize_speech(
     client: &aws_sdk_polly::Client,
     text: String,
     voice_id: VoiceId,
-) -> Result<(Vec<Viseme>, ByteStream), SynthesizeError> {
+) -> Result<(Vec<Viseme>, Vec<u8>), SynthesizeError> {
     let audio_fut = client
         .synthesize_speech()
         .engine(Engine::Neural)
@@ -469,10 +467,16 @@ async fn synthesize_speech(
         .speech_mark_types(SpeechMarkType::Viseme)
         .output_format(OutputFormat::Json)
         .send();
-    let (audio, visemes) = try_join(audio_fut, visemes_fut)
+    let (audio_out, visemes_out) = try_join(audio_fut, visemes_fut)
         .await
         .map_err(|e| SynthesizeError::Polly(e.into()))?;
-    let visemes = visemes
+    let audio = audio_out
+        .audio_stream
+        .collect()
+        .await
+        .map_err(|e| SynthesizeError::Transmitting(e.into()))?
+        .to_vec();
+    let visemes = visemes_out
         .audio_stream
         .collect()
         .await
@@ -482,5 +486,5 @@ async fn synthesize_speech(
         .lines()
         .flat_map(|line| Ok::<Viseme, anyhow::Error>(serde_json::from_str::<Viseme>(&line?)?))
         .collect();
-    Ok((parsed, audio.audio_stream))
+    Ok((parsed, audio))
 }

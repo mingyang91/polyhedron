@@ -407,7 +407,6 @@ fn u8_to_i16(input: &[u8]) -> Vec<i16> {
 
 #[cfg(test)]
 mod test {
-    use std::cell::{Cell};
     use std::time::Duration;
     use async_stream::stream;
     use poem::listener::{Acceptor, Listener};
@@ -490,7 +489,6 @@ mod test {
         };
         pin!(audio_stream);
 
-        let voice_flag = Cell::new(false);
         let recv_fut = async {
             while let Some(voice_slice) = audio_stream.next().await {
                 client_stream.send(Message::Binary(voice_slice)).await?;
@@ -503,8 +501,7 @@ mod test {
                 let Message::Text(json_str) = msg else { continue };
                 let Ok(evt) = serde_json::from_str::<SingleEvent>(&json_str) else { continue };
                 if let SingleEvent::Voice { .. } = evt {
-                    voice_flag.replace(true);
-                    break
+                    return Ok(())
                 }
             }
 
@@ -515,15 +512,14 @@ mod test {
             res = recv_fut => {
                 if let Err(e) = res {
                     error!("Error: {:?}", e);
+                    assert!(false, "Error: {}", e);
                 }
             }
             _ = sleep(Duration::from_secs(10)) => {
-                error!("timeout")
+                assert!(false, "timeout");
             }
-        }
+        };
 
         handle.abort();
-
-        assert!(voice_flag.get(), "voice not received");
     }
 }
