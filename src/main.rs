@@ -24,7 +24,7 @@ use poem::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::select;
-use tracing::debug;
+use tracing::{debug, span};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::{config::*, lesson::*};
@@ -122,6 +122,9 @@ async fn stream_speaker(
                     msg = socket.next() => {
                         let Some(res) = msg else { break };
                         let msg = res?;
+                        if msg.is_close() {
+                            break
+                        }
                         let Message::Binary(bin) = msg else {
                             tracing::warn!("Other: {:?}", msg);
                             continue
@@ -131,7 +134,9 @@ async fn stream_speaker(
                     },
                     output = transcribe_rx.recv() => {
                         let evt = output?;
-                        tracing::trace!("Transcribed: {}", evt.transcript);
+                        if evt.is_final {
+                            tracing::trace!("Transcribed: {}", evt.transcript);
+                        }
                         let evt = LiveLessonTextEvent::Transcription { content: evt.transcript, is_final: evt.is_final };
                         let Ok(json) = serde_json::to_string(&evt) else {
                             tracing::warn!("failed to serialize json: {:?}", evt);
@@ -144,6 +149,8 @@ async fn stream_speaker(
             Ok(())
         };
 
+        let span = span!(tracing::Level::TRACE, "lesson_speaker", lesson_id = query.id);
+        let _ = span.enter();
         let res: anyhow::Result<()> = fut.await;
         match res {
             Ok(()) => {
@@ -252,6 +259,8 @@ async fn stream_listener(
             }
         };
 
+        let span = span!(tracing::Level::TRACE, "lesson_listener", lesson_id = query.id);
+        let _ = span.enter();
         let res: anyhow::Result<()> = fut.await;
         match res {
             Ok(()) => {

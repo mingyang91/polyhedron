@@ -3,7 +3,9 @@ use std::{
     fmt::{Debug, Display, Formatter},
     thread::sleep,
     time::Duration,
+    sync::Arc
 };
+use std::ops::Deref;
 use fvad::SampleRate;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -15,18 +17,27 @@ use crate::{config::WhisperConfig, group::GroupedWithin};
 
 const WHISPER_SAMPLE_RATE: usize = whisper_rs_sys::WHISPER_SAMPLE_RATE as usize;
 
+#[derive(Clone)]
 pub struct Context {
-    context: WhisperContext,
+    inner: Arc<WhisperContext>,
 }
 
-impl <'a> Context {
+impl Context {
     pub fn new(model: &str) -> Result<Context, WhisperError> {
         WhisperContext::new(model)
-            .map(|context| Self { context })
+            .map(|context| Self { inner: Arc::new(context) })
     }
 
-    pub fn create_handler(&'static self, config: &'static WhisperConfig, prompt: String) -> Result<WhisperHandler, Error> {
-        WhisperHandler::new(&self.context, config, prompt)
+    pub fn create_handler(&self, config: WhisperConfig, prompt: String) -> WhisperHandler {
+        WhisperHandler::new(self.clone(), config, prompt)
+    }
+}
+
+impl Deref for Context {
+    type Target = WhisperContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
@@ -87,22 +98,30 @@ pub struct WhisperHandler {
 }
 
 impl WhisperHandler {
-
-    fn new(whisper_context: &'static WhisperContext, config: &'static WhisperConfig, prompt: String) -> Result<Self, Error> {
-        // let whisper_context = get_whisper_context(config.model.clone()).await;
-        let state = whisper_context
-            .create_state()
-            .map_err(|e| Error::whisper_error("failed to create WhisperState", e))?;
-        let preset_prompt_tokens = whisper_context
-            .tokenize(&prompt, config.max_prompt_tokens)
-            .map_err(|e| Error::whisper_error("failed to tokenize prompt", e))?;
+    fn new(whisper_context: Context, config: WhisperConfig, prompt: String) -> Self {
         let vad_slice_size = WHISPER_SAMPLE_RATE / 100 * 3;
         let (stop_handle, mut stop_signal) = oneshot::channel();
         let (pcm_tx, pcm_rx) = mpsc::channel::<Vec<i16>>(128);
         let (transcription_tx, _) = broadcast::channel::<Vec<Output>>(128);
         let shared_transcription_tx = transcription_tx.clone();
 
-        tokio::task::spawn_blocking(move || {
+        let task  = move || {
+            let state = match whisper_context.create_state() {
+                Ok(state) => state,
+                Err(e) => {
+                    tracing::error!("failed to create WhisperState: {}", e);
+                    return Err(Error::whisper_error("failed to create WhisperState", e))
+                }
+            };
+
+            let preset_prompt_tokens = match whisper_context.tokenize(&prompt, config.max_prompt_tokens) {
+                Ok(tokens) => tokens,
+                Err(e) => {
+                    tracing::error!("failed to tokenize prompt: {}", e);
+                    return Err(Error::whisper_error("failed to tokenize prompt", e))
+                }
+            };
+
             let mut vad = fvad::Fvad::new().expect("failed to create VAD")
                 .set_sample_rate(SampleRate::Rate16kHz);
             let mut detector = Detector::new(state, &config, preset_prompt_tokens);
@@ -112,6 +131,7 @@ impl WhisperHandler {
                 pcm_rx,
                 u16::MAX as usize,
             );
+
             while let Err(oneshot::error::TryRecvError::Empty) = stop_signal.try_recv() {
                 if detector.has_crossed_next_line() {
                     if let Some(segment) = detector.next_line() {
@@ -137,7 +157,6 @@ impl WhisperHandler {
                                 } else {
                                     vad.is_voice_frame(frame).unwrap_or(true)
                                 }
-                                // true
                             })
                             .collect::<Vec<_>>()
                             .concat();
@@ -168,13 +187,15 @@ impl WhisperHandler {
                     break;
                 };
             }
-        });
+            Ok::<(), Error>(())
+        };
+        tokio::task::spawn_blocking(task);
 
-        Ok(Self {
+        Self {
             tx: pcm_tx,
             transcription_tx,
             stop_handle: Some(stop_handle),
-        })
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<Output>> {
@@ -187,9 +208,9 @@ impl WhisperHandler {
 }
 
 #[allow(dead_code)]
-struct Detector {
-    state: WhisperState<'static>,
-    config: &'static WhisperConfig,
+struct Detector<'a> {
+    state: WhisperState<'a>,
+    config: &'a WhisperConfig,
     start_time: Instant,
     segment: Option<Segment>,
     line_num: usize,
@@ -202,10 +223,10 @@ struct Detector {
     offset: usize,
 }
 
-impl Detector {
+impl <'a> Detector<'a> {
     fn new(
-        state: WhisperState<'static>,
-        config: &'static WhisperConfig,
+        state: WhisperState<'a>,
+        config: &'a WhisperConfig,
         preset_prompt_tokens: Vec<WhisperToken>,
     ) -> Self {
         Detector {
@@ -229,12 +250,6 @@ impl Detector {
         if self.pcm_f32.len() < self.n_samples_len {
             return;
         }
-        // let len_to_drain = self
-        //     .pcm_f32
-        //     .drain(0..(self.pcm_f32.len() - self.n_samples_len))
-        //     .len();
-        // warn!("ASR too slow, drain {} samples", len_to_drain);
-        // self.offset += len_to_drain;
     }
 
     fn inference(&mut self) -> Result<Vec<Segment>, Error> {

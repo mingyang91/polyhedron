@@ -1,8 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use async_trait::async_trait;
-use tokio::{select, spawn};
+use tokio::{spawn};
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
 use lazy_static::lazy_static;
 
 extern crate whisper;
@@ -29,39 +28,27 @@ impl Debug for WhisperAsr {
 
 impl WhisperAsr {
     pub async fn from_config() -> Result<WhisperAsr, Error> {
-        let whisper = CONTEXT.create_handler(&SETTINGS.whisper, "".to_string())?;
+        let whisper = CONTEXT.create_handler(SETTINGS.whisper.clone(), "".to_string());
         let mut output_rx = whisper.subscribe();
         let (tx, _) = tokio::sync::broadcast::channel(64);
         let shared_tx = tx.clone();
         let fut = async move {
-            loop {
-                select! {
-                    poll = output_rx.recv() => {
-                        match poll {
-                            Ok(outputs) => {
-                                for output in outputs {
-                                    let res = match output {
-                                        Output::Stable(segment) => tx.send(Event {
-                                            transcript: segment.text,
-                                            is_final: true,
-                                        }),
-                                        Output::Unstable(segment) => tx.send(Event {
-                                            transcript: segment.text,
-                                            is_final: false,
-                                        }),
-                                    };
-                                    if let Err(e) = res {
-                                        tracing::warn!("Failed to send whisper event: {}", e);
-                                        break
-                                    }
-                                }
-                            },
-                            Err(RecvError::Closed) => break,
-                            Err(RecvError::Lagged(lagged)) => {
-                                tracing::warn!("Whisper ASR output lagged: {}", lagged);
-                            }
-                        }
-                    },
+            while let Ok(outputs) = output_rx.recv().await {
+                for output in outputs {
+                    let evt = match output {
+                        Output::Stable(segment) => Event {
+                            transcript: segment.text,
+                            is_final: true,
+                        },
+                        Output::Unstable(segment) => Event {
+                            transcript: segment.text,
+                            is_final: false,
+                        },
+                    };
+                    if let Err(e) = tx.send(evt) {
+                        tracing::warn!("Failed to send whisper event: {}", e);
+                        break
+                    }
                 }
             }
         };
