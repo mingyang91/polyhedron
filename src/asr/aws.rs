@@ -12,6 +12,7 @@ use tokio::select;
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::Stream;
 use futures_util::TryStreamExt;
+use tracing::trace;
 use crate::asr::{ASR, Event, slice_i16_to_u8};
 
 pub struct AwsAsr {
@@ -58,6 +59,7 @@ impl AwsAsr {
                 let output_stream = to_stream(output);
                 output_stream
                     .try_for_each(|text| async {
+                        trace!("here");
                         let _ = shared_speaker_transcript.send(text);
                         Ok(())
                     })

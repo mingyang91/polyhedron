@@ -3,6 +3,14 @@ name = "polyhedron"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "polyhedron"
+path = "src/lib.rs"
+
+[[bin]]
+name = "polyhedron"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0"
 async-stream = "0.3"

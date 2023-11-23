@@ -445,7 +445,6 @@ mod test {
 
         let mut rx = whisper_handler.subscribe();
         let send_fut = async {
-            // tokio::time::sleep(Duration::from_secs(5)).await;
             for chunk in chunks {
                 let _ = whisper_handler.send_i16(chunk).await.expect("failed to send sample");
                 tokio::time::sleep(Duration::from_millis(100)).await;

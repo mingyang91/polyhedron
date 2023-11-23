@@ -1,9 +1,7 @@
 use aws_config::SdkConfig;
-use aws_sdk_polly::primitives::ByteStream;
 use aws_sdk_polly::types::{Engine, OutputFormat, SpeechMarkType, VoiceId};
 use aws_sdk_transcribestreaming::types::{LanguageCode};
 use futures_util::future::try_join;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::io::BufRead;
@@ -17,11 +15,14 @@ use crate::asr::{Event, aws::AwsAsr, ASR};
 
 #[cfg(feature = "whisper")]
 use crate::asr::whisper::WhisperAsr;
+use crate::Viseme;
+
+pub type LessonID = String;
 
 pub struct InnerLessonsManager {
     translate_client: aws_sdk_translate::Client,
     polly_client: aws_sdk_polly::Client,
-    lessons: Arc<RwLock<BTreeMap<u32, Lesson>>>,
+    lessons: Arc<RwLock<BTreeMap<LessonID, Lesson>>>,
 }
 
 #[derive(Clone)]
@@ -43,7 +44,7 @@ impl Deref for LessonsManager {
     }
 }
 
-pub(crate) enum AsrEngine {
+pub enum AsrEngine {
     AWS,
     #[allow(dead_code)]
     #[cfg(feature = "whisper")]
@@ -69,7 +70,7 @@ impl AsrEngine {
 }
 
 impl LessonsManager {
-    pub(crate) fn new(sdk_config: &SdkConfig) -> Self {
+    pub fn new(sdk_config: &SdkConfig) -> Self {
         let translate_client = aws_sdk_translate::Client::new(sdk_config);
         let polly_client = aws_sdk_polly::Client::new(sdk_config);
         let inner = InnerLessonsManager {
@@ -80,14 +81,14 @@ impl LessonsManager {
         LessonsManager { inner: Arc::new(inner) }
     }
 
-    pub(crate) async fn create_lesson(&self, id: u32, engine: AsrEngine, speaker_lang: LanguageCode) -> Lesson {
+    pub(crate) async fn create_lesson(&self, id: LessonID, engine: AsrEngine, speaker_lang: LanguageCode) -> Lesson {
         let mut map = self.lessons.write().await;
         let lesson: Lesson = InnerLesson::new(self.clone(), engine, speaker_lang).await.into();
         map.insert(id, lesson.clone());
         lesson
     }
 
-    pub(crate) async fn get_lesson(&self, id: u32) -> Option<Lesson> {
+    pub(crate) async fn get_lesson(&self, id: LessonID) -> Option<Lesson> {
         let map = self.lessons.read().await;
         map.get(&id).cloned()
     }
@@ -434,12 +435,6 @@ impl Drop for InnerVoiceLesson {
 }
 
 
-// {"time":180,"type":"viseme","value":"r"}
-#[derive(Debug, Deserialize, Clone, Serialize)]
-pub(crate) struct Viseme {
-    time: u32,
-    value: String,
-}
 
 #[derive(Debug)]
 enum SynthesizeError {

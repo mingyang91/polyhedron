@@ -18,8 +18,7 @@ pub(crate) trait ASR {
 }
 
 
-#[allow(dead_code)]
-pub(crate) fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
+pub fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
     slice
         .iter()
         .flat_map(|&sample| {
