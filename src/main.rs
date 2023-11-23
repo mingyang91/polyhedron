@@ -28,10 +28,12 @@ use tracing::{debug, span};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::{config::*, lesson::*};
+use crate::base64box::Base64Box;
 
 mod config;
 mod lesson;
 mod asr;
+mod base64box;
 
 #[derive(Clone)]
 struct Context {
@@ -63,6 +65,7 @@ async fn main() -> Result<(), std::io::Error> {
         .at("/ws/teacher", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
         .at("/ws/student", get(stream_listener))
+        .at("/ws/voice", get(stream_single))
         .at(
             "lesson-speaker",
             StaticFileEndpoint::new("./static/index.html"),
@@ -268,6 +271,124 @@ async fn stream_listener(
             }
             Err(e) => {
                 tracing::warn!("lesson listener error: {}", e);
+            }
+        }
+    })
+}
+
+#[derive(Serialize, Debug)]
+enum SingleEvent {
+    #[serde(rename = "original")]
+    Transcription {
+        content: String,
+        #[serde(rename = "isFinal")]
+        is_final: bool
+    },
+    #[serde(rename = "translated")]
+    Translation { content: String },
+    #[serde(rename = "voice")]
+    Voice {
+        content: Base64Box
+    },
+}
+
+
+#[derive(Deserialize, Debug)]
+pub struct SingleQuery {
+    id: u32,
+    from: String,
+    to: String,
+    voice: Option<String>,
+}
+
+
+#[handler]
+async fn stream_single(
+    ctx: Data<&Context>,
+    query: Query<SingleQuery>,
+    ws: WebSocket
+) -> impl IntoResponse {
+    let lessons_manager = ctx.lessons_manager.clone();
+    ws.on_upgrade(|mut socket| async move {
+        let Ok(lang) = query.from.parse::<LanguageCode>() else {
+            let _ = socket
+                .send(Message::Text(format!("invalid language code: {}", query.from)))
+                .await;
+            return
+        };
+        let lesson = lessons_manager
+            .create_lesson(
+                query.id,
+                AsrEngine::AWS,
+                lang,
+            )
+            .await;
+
+        let mut transcribe_rx = lesson.transcript_channel();
+        let mut lang_lesson = lesson.get_or_init(query.to.clone()).await;
+        let mut translate_rx = lang_lesson.translated_channel();
+        let Ok(voice_id) = query.voice.as_deref().unwrap_or("Amy").parse() else {
+            let _ = socket
+                .send(Message::Text(format!("invalid voice id: {:?}", query.voice)))
+                .await;
+          return
+        };
+        let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
+        let mut voice_rx = voice_lesson.voice_channel();
+        // let mut lip_sync_rx = voice_lesson.lip_sync_channel();
+
+        let fut = async {
+            loop {
+                let evt = select! {
+                    input = socket.next() => {
+                        let Some(res) = input else { break };
+                        let msg = res?;
+                        if msg.is_close() {
+                            break
+                        }
+                        let Message::Binary(bin) = msg else {
+                            tracing::warn!("Other: {:?}", msg);
+                            continue
+                        };
+                        let frame = u8_to_i16(&bin);
+                        lesson.send(frame).await?;
+                        continue
+                    },
+                    transcript_poll = transcribe_rx.recv() => {
+                        let evt = transcript_poll?;
+                        if evt.is_final {
+                            tracing::trace!("Transcribed: {}", evt.transcript);
+                        }
+                        SingleEvent::Transcription { content: evt.transcript, is_final: evt.is_final }
+                    },
+                    translated_poll = translate_rx.recv() => {
+                        let translated = translated_poll?;
+                        SingleEvent::Translation { content: translated }
+                    },
+                    voice_poll = voice_rx.recv() => {
+                        let voice = voice_poll?;
+                        SingleEvent::Voice { content: Base64Box(voice) }
+                    },
+                };
+
+                let Ok(json) = serde_json::to_string(&evt) else {
+                    tracing::warn!("failed to serialize json: {:?}", evt);
+                    continue
+                };
+                socket.send(Message::Text(json)).await?
+            }
+            Ok(())
+        };
+
+        let span = span!(tracing::Level::TRACE, "lesson_speaker", lesson_id = query.id);
+        let _ = span.enter();
+        let res: anyhow::Result<()> = fut.await;
+        match res {
+            Ok(()) => {
+                tracing::info!("lesson speaker closed");
+            }
+            Err(e) => {
+                tracing::warn!("lesson speaker error: {}", e);
             }
         }
     })
