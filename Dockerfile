@@ -1,4 +1,4 @@
-FROM rust:latest as chef
+FROM rust:slim as chef
 RUN apt-get update && apt-get install -y curl
 RUN cargo install cargo-chef
 WORKDIR /app
@@ -14,8 +14,7 @@ COPY . .
 RUN cargo chef cook --release --recipe-path recipe.json
 RUN cargo build --release
 
-FROM ubuntu:latest as runtime
-
+FROM debian:bookworm-slim as runtime
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/polyhedron .

@@ -12,8 +12,8 @@ use tokio::select;
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::Stream;
 use futures_util::TryStreamExt;
-use tracing::trace;
-use crate::asr::{ASR, Event, slice_i16_to_u8};
+use tracing::{trace, warn};
+use crate::asr::{ASR, Event, slice_i16_to_u8_le};
 
 pub struct AwsAsr {
     speaker_voice_channel: tokio::sync::mpsc::Sender<Vec<i16>>,
@@ -42,7 +42,7 @@ impl AwsAsr {
             let fut = async {
                 let input_stream = stream! {
                     while let Some(raw) = speaker_voice_rx.recv().await {
-                        let reshape = slice_i16_to_u8(&raw);
+                        let reshape = slice_i16_to_u8_le(&raw);
                         yield Ok(AudioStream::AudioEvent(AudioEvent::builder().audio_chunk(Blob::new(reshape)).build()));
                     }
                 };
@@ -59,7 +59,6 @@ impl AwsAsr {
                 let output_stream = to_stream(output);
                 output_stream
                     .try_for_each(|text| async {
-                        trace!("here");
                         let _ = shared_speaker_transcript.send(text);
                         Ok(())
                     })
@@ -69,7 +68,7 @@ impl AwsAsr {
             select! {
                 res = fut => {
                     if let Err(e) = res {
-                        println!("Error: {:?}", e);
+                        warn!("Error: {:?}", e);
                     }
                 }
                 _ = drop_rx => {}

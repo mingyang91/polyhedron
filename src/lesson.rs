@@ -8,7 +8,7 @@ use std::io::BufRead;
 use std::ops::Deref;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use tracing::{error};
+use tracing::{error, warn};
 
 use tokio::select;
 use crate::asr::{Event, aws::AwsAsr, ASR};
@@ -296,7 +296,7 @@ impl LangLesson {
             select! {
                 res = fut => {
                     if let Err(e) = res {
-                        println!("Error: {:?}", e);
+                        warn!("Error: {:?}", e);
                     }
                 }
                 _ = drop_rx => {}
@@ -411,7 +411,7 @@ impl InnerVoiceLesson {
                 res = fut => match res {
                     Ok(_) => {}
                     Err(e) => {
-                        println!("Error: {:?}", e);
+                        warn!("Error: {:?}", e);
                     }
                 },
                 _ = rx => {}

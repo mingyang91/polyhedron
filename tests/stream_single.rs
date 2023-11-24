@@ -19,7 +19,7 @@ use tracing::{info, error, debug};
 use polyhedron::{
     stream_single,
     SingleEvent,
-    asr::slice_i16_to_u8,
+    asr::slice_i16_to_u8_le,
     Context
 };
 
@@ -51,6 +51,7 @@ async fn test_single() {
     let url = format!(
         "ws://{}/ws/voice?id=123abc&from=zh-CN&to=en-US&voice=Amy", addr
     );
+    // let url = "ws://localhost:8080/ws/voice?id=123abc&from=zh-CN&to=en-US&voice=Amy".to_string();
     let (mut client_stream, _) = connect_async(url)
         .await
         .unwrap();
@@ -75,8 +76,8 @@ async fn test_single() {
 
     let audio_stream = stream! {
         for chunk in chunks {
-            yield slice_i16_to_u8(&chunk);
-            sleep(Duration::from_millis(10)).await;
+            yield slice_i16_to_u8_le(&chunk);
+            sleep(Duration::from_millis(100)).await;
         }
     };
     pin!(audio_stream);
@@ -106,7 +107,7 @@ async fn test_single() {
                 assert!(false, "Error: {}", e);
             }
         }
-        _ = sleep(Duration::from_secs(10)) => {
+        _ = sleep(Duration::from_secs(15)) => {
             assert!(false, "timeout");
         }
     };

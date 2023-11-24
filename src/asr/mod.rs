@@ -18,7 +18,7 @@ pub(crate) trait ASR {
 }
 
 
-pub fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
+pub fn slice_i16_to_u8_le(slice: &[i16]) -> Vec<u8> {
     slice
         .iter()
         .flat_map(|&sample| {
@@ -26,4 +26,14 @@ pub fn slice_i16_to_u8(slice: &[i16]) -> Vec<u8> {
         })
         .collect()
 }
+
+pub fn slice_i16_to_u8_be(slice: &[i16]) -> Vec<u8> {
+    slice
+        .iter()
+        .flat_map(|&sample| {
+            [(sample >> 8) as u8, sample as u8]
+        })
+        .collect()
+}
+
 
