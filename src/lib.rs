@@ -40,13 +40,15 @@ impl Context {
     }
 }
 
+
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
 pub enum SingleEvent {
     #[serde(rename = "original")]
     Transcription {
         content: String,
         #[serde(rename = "isFinal")]
-        is_final: bool
+        is_final: bool,
     },
     #[serde(rename = "translated")]
     Translation { content: String },
@@ -71,7 +73,7 @@ pub enum LiveLessonTextEvent {
     Transcription {
         content: String,
         #[serde(rename = "isFinal")]
-        is_final: bool
+        is_final: bool,
     },
     Translation { content: String },
     LipSync { visemes: Vec<Viseme> },
@@ -105,7 +107,7 @@ async fn stream_speaker(
             let _ = socket
                 .send(Message::Text(format!("invalid language code: {}", query.language)))
                 .await;
-            return
+            return;
         };
         let lesson = lessons_manager
             .create_lesson(
@@ -254,8 +256,13 @@ async fn stream_listener(
     })
 }
 
+fn default_lesson_id() -> String {
+    String::from("1")
+}
+
 #[derive(Deserialize, Debug)]
 pub struct SingleQuery {
+    #[serde(default = "default_lesson_id")]
     id: LessonID,
     from: String,
     to: String,
@@ -267,7 +274,7 @@ pub struct SingleQuery {
 pub async fn stream_single(
     ctx: Data<&Context>,
     query: Query<SingleQuery>,
-    ws: WebSocket
+    ws: WebSocket,
 ) -> impl IntoResponse {
     let lessons_manager = ctx.lessons_manager.clone();
     ws.on_upgrade(|mut socket| async move {
@@ -275,7 +282,7 @@ pub async fn stream_single(
             let _ = socket
                 .send(Message::Text(format!("invalid language code: {}", query.from)))
                 .await;
-            return
+            return;
         };
         let lesson = lessons_manager
             .create_lesson(
@@ -292,7 +299,7 @@ pub async fn stream_single(
             let _ = socket
                 .send(Message::Text(format!("invalid voice id: {:?}", query.voice)))
                 .await;
-            return
+            return;
         };
         let mut voice_lesson = lang_lesson.get_or_init(voice_id).await;
         let mut voice_rx = voice_lesson.voice_channel();
@@ -334,7 +341,7 @@ pub async fn stream_single(
 
                 let Ok(json) = serde_json::to_string(&evt) else {
                     tracing::warn!("failed to serialize json: {:?}", evt);
-                    continue
+                    continue;
                 };
                 socket.send(Message::Text(json)).await?
             }
