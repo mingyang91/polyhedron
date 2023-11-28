@@ -15,9 +15,9 @@ path = "src/main.rs"
 anyhow = "1.0"
 async-stream = "0.3"
 aws-config = "1.0.0"
-aws-sdk-transcribestreaming = "0.39.0"
-aws-sdk-translate = "0.39.0"
-aws-sdk-polly = "0.39.0"
+aws-sdk-transcribestreaming = "1.3"
+aws-sdk-translate = "1.3"
+aws-sdk-polly = "1.3"
 config = "0.13"
 futures-util = "0.3"
 once_cell = "1.18"
@@ -33,17 +33,18 @@ lazy_static = "1.4.0"
 base64 = { version = "0.21.5", features = [] }
 
 [features]
-whisper = ["dep:whisper"]
+default = []
+whisper = ["whisper-rs"]
 
 [dependencies.poem]
 version = "1.3"
 features = ["websocket", "static-files"]
 
 [target.'cfg(target_os="macos")'.dependencies]
-whisper = { path="whisper", features = ["metal", "coreml"], optional = true }
-
+whisper-rs = { version = "0.10", features = ["metal", "coreml"], default-features = false, optional = true }
+#
 [target.'cfg(target_os="linux")'.dependencies]
-whisper = { path="whisper", features = ["cuda"], optional = true }
+whisper-rs = { version = "0.10", features = ["cuda"], default-features = false, optional = true }
 
 [dev-dependencies]
 tracing-test = "*"
