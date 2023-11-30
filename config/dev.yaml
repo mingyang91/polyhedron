@@ -31,3 +31,7 @@ whisper:
         suppress_non_speech_tokens: false
         tinydiarize: false
         language: "en"
+postgres:
+    addr: "127.0.0.1:5432"
+    user: "postgres"
+    passwd: "postgres"

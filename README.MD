@@ -4,6 +4,7 @@ Polyhedron is a voice chat application designed to enable real-time transcriptio
 
 ## Overview
 The app allows a trainer to conduct lessons in their native language, while trainees can receive instructions translated into their own languages.
+It also allows teachers to create classes and students enter them.
 
 ## Key features:
 
@@ -13,6 +14,7 @@ The app allows a trainer to conduct lessons in their native language, while trai
 - Allows trainer to see transcription and repeat unclear sections
 - Facilitates training in multilingual organizations
 - Polyhedron uses WebSockets to stream audio and text between clients. The frontend is built with React and Vite.
+- Manage classes. Including class creation, querying, materials listing and user entrance.
 
 The backend is developed in Rust using the Poem web framework with WebSockets support. It interfaces with AWS services for transcription, translation and text-to-speech.
 
@@ -75,6 +77,7 @@ The architecture forms a linear pipeline from speaker voice input to listener vo
     - `lesson.rs`: Lesson management and audio streaming
     - `whisper.rs`: Whisper ASR integration
     - `group.rs`: Group management
+    - `class.rs`: Class management
 - `static/`: Frontend JavaScript and assets
     - `index.html`: Main HTML page
     - `index.js`: React frontend code

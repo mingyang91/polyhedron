@@ -18,10 +18,18 @@ pub(crate) struct Server {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct Postgres {
+    pub(crate) addr: String,
+    pub(crate) user: String,
+    pub(crate) passwd: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Settings {
     #[cfg(feature = "whisper")]
     pub(crate) whisper: whisper::config::WhisperConfig,
     pub(crate) server: Server,
+    pub(crate) postgres: Postgres,
 }
 
 impl Settings {
