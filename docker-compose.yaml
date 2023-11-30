@@ -1,5 +1,14 @@
 version: "3"
 services:
+  pg:
+    image: postgres:latest
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    restart: always
   polyhedron:
     container_name: polyhedron
     build: ./

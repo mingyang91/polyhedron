@@ -5,37 +5,37 @@ pub mod config;
 pub mod lesson;
 pub mod asr;
 pub mod base64box;
+pub mod class;
 
+use std::sync::Arc;
 use aws_config::{SdkConfig};
 use aws_sdk_transcribestreaming::types::LanguageCode;
 use futures_util::{stream::StreamExt, SinkExt};
-use poem::{
-    endpoint::{StaticFileEndpoint, StaticFilesEndpoint},
-    get, handler,
-    listener::TcpListener,
-    web::{
-        websocket::{Message, WebSocket},
-        Data, Query,
-    },
-    EndpointExt, IntoResponse, Route, Server,
-};
+use poem::{endpoint::{StaticFileEndpoint, StaticFilesEndpoint}, get, handler, listener::TcpListener, web::{
+    websocket::{Message, WebSocket},
+    Data, Query,
+}, EndpointExt, IntoResponse, Route, Server, post};
 use serde::{Deserialize, Serialize};
 use tokio::select;
+use tokio_postgres::{Client, NoTls};
 use tracing::{debug, span};
 
 use crate::base64box::Base64Box;
+use crate::class::{create_lesson, digital_human_list, enter_class, lesson_list, supported_lang_list};
 use crate::config::SETTINGS;
 use crate::lesson::{AsrEngine, LessonID, LessonsManager};
 
 #[derive(Clone)]
 pub struct Context {
     lessons_manager: LessonsManager,
+    pg_client: Arc<Client>,
 }
 
 impl Context {
-    pub fn new(config: &SdkConfig) -> Self {
+    pub fn new(config: &SdkConfig, pg_client: Arc<Client>) -> Self {
         Self {
             lessons_manager: LessonsManager::new(config),
+            pg_client,
         }
     }
 }
@@ -374,8 +374,21 @@ fn u8_to_i16(input: &[u8]) -> Vec<i16> {
 }
 
 pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
+    let pg_uri = format!(
+        "postgresql://{}:{}@{}/postgres?keepalives=1",
+        SETTINGS.postgres.user, SETTINGS.postgres.passwd, SETTINGS.postgres.addr
+    );
+    let (client, conn) = tokio_postgres::connect(pg_uri.as_ref(), NoTls)
+        .await
+        .expect("Unable to connect to postgres");
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            println!("connection with pg is broken: {}", e);
+        }
+    });
     let ctx = Context {
         lessons_manager: LessonsManager::new(config),
+        pg_client: Arc::new(client)
     };
 
     let app = Route::new()
@@ -398,6 +411,11 @@ pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
             "lesson-listener",
             StaticFileEndpoint::new("./static/index.html"),
         )
+        .at("/lesson", post(create_lesson))
+        .at("/lesson/list", get(lesson_list))
+        .at("/digital_humans", get(digital_human_list))
+        .at("/supported_langs", get(supported_lang_list))
+        .at("/enter", post(enter_class))
         .data(ctx);
     let addr = format!("{}:{}", SETTINGS.server.host, SETTINGS.server.port);
     let listener = TcpListener::bind(addr);
