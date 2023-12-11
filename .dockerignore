@@ -1,5 +1,4 @@
 .idea/
-static/
 target/
 docker-compose.yaml
 Dockerfile
