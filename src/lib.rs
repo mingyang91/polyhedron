@@ -21,7 +21,7 @@ use poem::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::select;
-use tracing::{debug, span};
+use tracing::{debug, info, span, warn};
 
 use crate::base64box::Base64Box;
 use crate::config::SETTINGS;
@@ -56,6 +56,8 @@ pub enum SingleEvent {
     Voice {
         content: Base64Box
     },
+    #[serde(rename = "lipSync")]
+    LipSync { visemes: Vec<Viseme> },
 }
 
 
@@ -156,10 +158,10 @@ async fn stream_speaker(
         let res: anyhow::Result<()> = fut.await;
         match res {
             Ok(()) => {
-                tracing::info!("lesson speaker closed");
+                info!("lesson speaker closed");
             }
             Err(e) => {
-                tracing::warn!("lesson speaker error: {}", e);
+                warn!("lesson speaker error: {}", e);
             }
         }
     })
@@ -171,6 +173,7 @@ async fn stream_listener(
     query: Query<LessonListenerQuery>,
     ws: WebSocket,
 ) -> impl IntoResponse {
+    info!("listener param = {:?}", query);
     let lessons_manager = ctx.lessons_manager.clone();
 
     ws.on_upgrade(|mut socket| async move {
@@ -204,7 +207,7 @@ async fn stream_listener(
                 select! {
                     transcript_poll = transcript_rx.recv() => {
                         let transcript = transcript_poll?;
-                        let evt = LiveLessonTextEvent::Transcription {
+                        let evt = SingleEvent::Transcription {
                             content: transcript.transcript,
                             is_final: transcript.is_final
                         };
@@ -212,17 +215,17 @@ async fn stream_listener(
                             tracing::warn!("failed to serialize: {:?}", evt);
                             continue
                         };
-                        tracing::debug!("Transcribed: {}", json);
+                        debug!("Transcribed: {}", json);
                         socket.send(Message::Text(json)).await?
                     },
                     translated_poll = translate_rx.recv() => {
                         let translated = translated_poll?;
-                        let evt = LiveLessonTextEvent::Translation { content: translated };
+                        let evt = SingleEvent::Translation { content: translated };
                         let Ok(json) = serde_json::to_string(&evt) else {
-                            tracing::warn!("failed to serialize: {:?}", evt);
+                            warn!("failed to serialize: {:?}", evt);
                             continue
                         };
-                        tracing::debug!("Translated: {}", json);
+                        debug!("Translated: {}", json);
                         socket.send(Message::Text(json)).await?
                     },
                     voice_poll = voice_rx.recv() => {
@@ -231,9 +234,9 @@ async fn stream_listener(
                     },
                     visemes_poll = lip_sync_rx.recv() => {
                         let visemes = visemes_poll?;
-                        let evt = LiveLessonTextEvent::LipSync { visemes };
+                        let evt = SingleEvent::LipSync { visemes };
                         let Ok(json) = serde_json::to_string(&evt) else {
-                            tracing::warn!("failed to serialize: {:?}", evt);
+                            warn!("failed to serialize: {:?}", evt);
                             continue
                         };
                         socket.send(Message::Text(json)).await?
@@ -247,10 +250,10 @@ async fn stream_listener(
         let res: anyhow::Result<()> = fut.await;
         match res {
             Ok(()) => {
-                tracing::info!("lesson listener closed");
+                info!("lesson listener closed");
             }
             Err(e) => {
-                tracing::warn!("lesson listener error: {}", e);
+                warn!("lesson listener error: {}", e);
             }
         }
     })

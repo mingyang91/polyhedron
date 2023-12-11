@@ -12,7 +12,7 @@ use tokio::select;
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::Stream;
 use futures_util::TryStreamExt;
-use tracing::{trace, warn};
+use tracing::{warn};
 use crate::asr::{ASR, Event, slice_i16_to_u8_le};
 
 pub struct AwsAsr {
