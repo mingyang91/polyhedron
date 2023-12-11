@@ -395,11 +395,11 @@ pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
         .at("/ws/voice", get(stream_single))
         .at(
             "lesson-speaker",
-            StaticFileEndpoint::new("./static/index.html"),
+            StaticFileEndpoint::new("./static/debug.html"),
         )
         .at(
             "lesson-listener",
-            StaticFileEndpoint::new("./static/index.html"),
+            StaticFileEndpoint::new("./static/debug.html"),
         )
         .data(ctx);
     let addr = format!("{}:{}", SETTINGS.server.host, SETTINGS.server.port);
