@@ -1,3 +1,13 @@
+---
+title: Polyhedron
+emoji: 🚀
+colorFrom: yellow
+colorTo: yellow
+sdk: docker
+pinned: false
+license: apache-2.0
+---
+
 # Polyhedron
 
 Polyhedron is a voice chat application designed to enable real-time transcription and translation for training across language barriers.
