@@ -1,0 +1,168 @@
+{
+  "metadata": {
+    "soundFile": "/Users/wawa/Documents/Projects/wawasensei/r3f-lipsync-tutorial/Rhubarb-Lip-Sync-1.13.0-macOS/../public/audios/pizzas.ogg",
+    "duration": 6.92
+  },
+	"vimeses": [
+		{
+			"time": 125,
+			"value": "S"
+		},
+		{
+			"time": 200,
+			"value": "i"
+		},
+		{
+			"time": 312,
+			"value": "S"
+		},
+		{
+			"time": 375,
+			"value": "i"
+		},
+		{
+			"time": 450,
+			"value": "t"
+		},
+		{
+			"time": 500,
+			"value": "p"
+		},
+		{
+			"time": 562,
+			"value": "i"
+		},
+		{
+			"time": 625,
+			"value": "k"
+		},
+		{
+			"time": 750,
+			"value": "a"
+		},
+		{
+			"time": 837,
+			"value": "k"
+		},
+		{
+			"time": 937,
+			"value": "t"
+		},
+		{
+			"time": 1000,
+			"value": "o"
+		},
+		{
+			"time": 1062,
+			"value": "p"
+		},
+		{
+			"time": 1137,
+			"value": "E"
+		},
+		{
+			"time": 1250,
+			"value": "t"
+		},
+		{
+			"time": 1312,
+			"value": "u"
+		},
+		{
+			"time": 1375,
+			"value": "E"
+		},
+		{
+			"time": 1437,
+			"value": "t"
+		},
+		{
+			"time": 1487,
+			"value": "t"
+		},
+		{
+			"time": 1512,
+			"value": "i"
+		},
+		{
+			"time": 1625,
+			"value": "f"
+		},
+		{
+			"time": 1637,
+			"value": "E"
+		},
+		{
+			"time": 1775,
+			"value": "s"
+		},
+		{
+			"time": 1837,
+			"value": "t"
+		},
+		{
+			"time": 1875,
+			"value": "t"
+		},
+		{
+			"time": 1937,
+			"value": "u"
+		},
+		{
+			"time": 1962,
+			"value": "E"
+		},
+		{
+			"time": 2037,
+			"value": "t"
+		},
+		{
+			"time": 2087,
+			"value": "t"
+		},
+		{
+			"time": 2125,
+			"value": "i"
+		},
+		{
+			"time": 2225,
+			"value": "t"
+		},
+		{
+			"time": 2262,
+			"value": "u"
+		},
+		{
+			"time": 2312,
+			"value": "E"
+		},
+		{
+			"time": 2375,
+			"value": "t"
+		},
+		{
+			"time": 2425,
+			"value": "t"
+		},
+		{
+			"time": 2450,
+			"value": "i"
+		},
+		{
+			"time": 2625,
+			"value": "T"
+		},
+		{
+			"time": 2637,
+			"value": "r"
+		},
+		{
+			"time": 2787,
+			"value": "i"
+		},
+		{
+			"time": 3025,
+			"value": "sil"
+		}
+	]
+}
