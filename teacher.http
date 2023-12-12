@@ -1,0 +1,11 @@
+### teacher API
+// ONLY SUPPORT SINGLE TEACHER PER COURSE ID
+// IN message:
+// Binary data, PCM audio, 16K sampling rate, single channel, 16-bit depth, little endian
+// id: [Required], course ID
+// language: [Required], zh-CN, en-US... (see https://docs.aws.amazon.com/zh_cn/transcribe/latest/dg/supported-languages.html)
+// prompt: [Optional], All background and context about the course topic
+// OUT message:
+// example1: {"type":"original","content":"之后","isFinal":false}
+// example2: {"type":"original","content":"之后的资本就是说做的工作的做的东西","isFinal":true}
+WEBSOCKET wss://{{$exampleServer}}}/ws/teacher?id=456&language=zh-CN&prompt=

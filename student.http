@@ -1,0 +1,12 @@
+### student API
+// IN message: N/A
+// - id: [Required], course ID
+// - language: [Required], zh-CN, en-US
+// - voice: [Required], Takumi
+// *language & voice support matrix*: https://docs.aws.amazon.com/zh_cn/polly/latest/dg/voicelist.html
+// OUT message:
+// example1: {"type":"original","content":"哎，","isFinal":true}
+// example2: {"type":"translated","content":"ねえ、"}
+// example3: {"type":"lipSync","visemes":[{"time":12,"value":"t"},{"time":25,"value":"@"},{"time":200,"value":"sil"}]}
+// example4: Binary data, PCM audio, 16K sampling rate, single channel, 16-bit depth, little endian
+WEBSOCKET wss://{{$exampleServer}}}/ws/student?id=456&language=zh-CN&voice=Takumi
