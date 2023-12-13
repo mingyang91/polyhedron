@@ -1,9 +1,8 @@
 ### student API
 // IN message: N/A
 // - id: [Required], course ID
-// - language: [Required], zh-CN, en-US
-// - voice: [Required], Takumi
-// *language & voice support matrix*: https://docs.aws.amazon.com/zh_cn/polly/latest/dg/voicelist.html
+// - language: [Required], zh-CN, en-US. (Supported languages: https://docs.aws.amazon.com/translate/latest/dg/what-is-languages.html)
+// - voice: [Required], Takumi. (Supported voices: https://docs.aws.amazon.com/zh_cn/polly/latest/dg/voicelist.html)
 // OUT message:
 // example1: {"type":"original","content":"哎，","isFinal":true}
 // example2: {"type":"translated","content":"ねえ、"}
