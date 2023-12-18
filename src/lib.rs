@@ -401,6 +401,7 @@ pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
             "lesson-listener",
             StaticFileEndpoint::new("./static/debug.html"),
         )
+        .nest("/",  StaticFileEndpoint::new("./static/index.html"))
         .data(ctx);
     let addr = format!("{}:{}", SETTINGS.server.host, SETTINGS.server.port);
     let listener = TcpListener::bind(addr);
