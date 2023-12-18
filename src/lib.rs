@@ -382,12 +382,6 @@ pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
     };
 
     let app = Route::new()
-        .nest(
-            "/",
-            StaticFilesEndpoint::new("./static")
-                .show_files_listing()
-                .index_file("index.html"),
-        )
         .at("/ws/lesson-speaker", get(stream_speaker))
         .at("/ws/teacher", get(stream_speaker))
         .at("/ws/lesson-listener", get(stream_listener))
@@ -401,7 +395,13 @@ pub async fn app(config: &SdkConfig) -> Result<(), std::io::Error> {
             "lesson-listener",
             StaticFileEndpoint::new("./static/debug.html"),
         )
-        .nest("/",  StaticFileEndpoint::new("./static/index.html"))
+        .nest(
+            "/",
+            StaticFilesEndpoint::new("./static")
+                .show_files_listing()
+                .index_file("index.html")
+                .fallback_to_index(),
+        )
         .data(ctx);
     let addr = format!("{}:{}", SETTINGS.server.host, SETTINGS.server.port);
     let listener = TcpListener::bind(addr);
